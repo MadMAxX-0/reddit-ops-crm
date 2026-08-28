@@ -245,6 +245,36 @@ fact about a post, and one list cannot hold both usefully.
 
 ---
 
+---
+
+# THE SHAPE OF THE OPERATION
+
+Build for this scale. It is small, and designing for a bigger one produces
+screens nobody reads.
+
+- **~70 Reddit accounts total**, in three pipeline stages: ~22 CREATING,
+  ~37 FARMING, **~12 ACTIVE (in rotation)**. Only the ACTIVE ones are counted
+  in any posting figure.
+- **7 models** (the OnlyFans creators). Each has **one or two Reddit accounts**
+  in rotation — a main and a second. Both belong to the same model; "2nd" is a
+  second account, not a second person, so they map to the same `Creator` row and
+  group under one name.
+- **2 posting VAs**, holding roughly 8 and 4 accounts. Plus farmers who warm
+  accounts and never post.
+- Accounts run on **named devices / proxies** — `Adspower/Chile`,
+  `Adspower/Italy`, `Adspower/USA`, `Iphone 13`, `Phone 3`, `Phone 4`,
+  `Phone 12`, `Phone 14/Brazil`. Store the device as a plain string on the
+  account; it is how the team identifies which physical setup a handle lives on.
+- **Two subreddit lists** to start: ~159 trans-audience subreddits and ~65
+  femboy ones, with ~22 appearing on both.
+- **A handful of watched competitor accounts**, growing over time.
+
+Every account carries: model, VA, device, a bouncy/tracking link, karma, age,
+status and a flag. A model's accounts are worked as a set — if one dies the
+model has no reach until another is warmed, which is the thing the pipeline
+screen exists to make visible.
+
+
 # SCREENS
 
 ## 1. Dashboard — "how is Reddit doing?"
@@ -343,11 +373,45 @@ every unpicked subreddit, best first), **✕ drop** (removes it and pulls up the
 next best). A swap **re-sorts** rather than slotting in — the running order is
 the point of the screen.
 
-## 4. Account Pipeline
+## 4. Account Pipeline — "what is coming, and what died"
 
-Accounts being created and warmed. Four summary tiles: total accounts, ready to
-use (age and karma thresholds), total karma, bans in the last 7 days. Stage
-columns, with dead accounts flagged rather than counted as workable.
+Everything **not** in rotation: accounts being created, and accounts being
+farmed until they are usable. This is the supply line, and its job is to answer
+"will we have an account when this one dies".
+
+**Four tiles across the top, larger than the rest of the page:**
+
+- **Accounts** — total, with a real breakdown underneath (`22 creating · 37
+  farming · 12 in rotation`) computed from a `groupBy`, never a guessed label.
+  An early version said "suspended or retired" when zero accounts were retired;
+  the breakdown must be measured.
+- **Ready to use** — age **and** karma both cleared. The thresholds are
+  parameters, not constants: default 14 days and 1,000 karma, but check them
+  against the subreddit lists. In this build only 3 subreddits demanded 1,000
+  karma while the largest (2.7M members) wanted **100 comment karma and 7 days**
+  — so a strict default holds accounts back from the biggest target on the list.
+- **Total karma** across all accounts.
+- **Bans found · 7d**, in red, with undated bans counted separately rather than
+  folded in.
+
+**Then the stages**, each a column or grouped table: CREATING → FARMING →
+ACTIVE. Per account: handle, device, age in days, karma, flag, and the model it
+is destined for.
+
+**Rules that matter here:**
+
+- **Dead accounts must never be counted as workable.** A stage count that
+  includes suspended accounts tells a farmer to work an account that cannot
+  post. Flag them and exclude them from the stage totals, with a filter to see
+  them.
+- **Flags are raised and never cleared automatically** — `BANNED`,
+  `SHADOWBANNED`. A person takes a flag down. But the **status** must move in
+  both directions, because status is what the rest of the CRM reads to decide
+  whether an account can be worked.
+- **Age and karma come from the profile endpoint**, which is reliable. Do not
+  infer readiness from anything that can return empty.
+- A farming account's work is **comments, not posts**. Show comment counts here
+  or the whole screen reads as idle.
 
 ## 5. Scraper — building subreddit lists
 
@@ -361,15 +425,62 @@ counts, behind a "Dead" chip.
 
 ## 6. Spy — watching other accounts
 
-Tracked accounts table: **Account · Karma · Change · Posts · Tags**, where
-Change is karma movement since the previous read. A fixed tag vocabulary across
-the top as a filter bar with counts and a `clear`.
+Watch any public Reddit account: competitors, or accounts whose placement is
+worth copying. Everything here reads public timelines — nothing is written to
+Reddit and no account is contacted.
 
-Expanding shows their posts — **Best ever / Latest**, thumbnails, outbound host,
-score, replies — and a **Save to** album chip on every row.
+**Add accounts** by pasting handles (spaces, commas, `u/` prefixes all
+tolerated).
 
-Albums are collections of **posts** (a swipe file), shown as a grid with the
-image, where it came from, and a Remove.
+**Tag bar across the top.** A **fixed vocabulary**, always visible, one click to
+filter and a `clear`: AI · Asian · Ass · Bikini · Boobs · Caucasian · Cosplay ·
+Curvy/BBW · Girl next door · Goth · Latina · Lingerie · Petite · Sport ·
+Tattooed · Teen (18+) · Trans/TS. Each shows how many accounts carry it; unused
+ones sit dimmed. **Closed list on purpose** — free text drifts into
+`latina`/`Latina`/`latinas` inside a week and the filter becomes useless.
+Anything outside the vocabulary is rejected, not silently stored.
+
+**Tracked accounts table: Account · Karma · Change · Posts · Tags**
+
+- **Karma** is the follower-equivalent; **Change** is movement since the
+  previous read. Keep `karma` and `karmaPrev` on the row — a standing total of
+  40k says nothing, `+900 since yesterday` says they are working.
+- **Posts** shows the tracked total with `N/day · ~N ↑` underneath: how hard a
+  working account posts, and what a normal result looks like there. That is the
+  benchmark your own accounts get measured against.
+- **Tags** render as chips, clickable to filter, with a `+` opening the
+  vocabulary inline. Picking a tag closes the menu — a strip of seventeen
+  buttons left open under every row is noise.
+- Per row: open on Reddit, refresh just this account, pause, stop watching.
+
+**Expanding an account** shows its posts with a **Best ever / Latest** toggle,
+20 each, defaulting to Best ever. Each row: **preview image**, subreddit, title
+(linking to the post), the outbound host (`redgifs.com`, `i.redd.it`), score,
+replies, and a **Save to** album chip.
+
+Two separate lists, not one sorted two ways. An account's biggest post is
+usually months old, and sorting a recent slice by score can never surface it.
+Reading the feed both ways — plain and `?sort=top&t=all` — is what makes "best
+ever" reach back a year instead of two days.
+
+**Albums are a swipe file of THEIR posts.** Not a grouping of accounts — that is
+what tags are for. Keeping them separate matters: "Latina creators" is a fact
+about a person, "this title worked" is a fact about a post, and one list holding
+both is useless for either.
+
+- Album tiles across the top showing name, colour and **how many posts are kept
+  in it**.
+- Clicking a tile **opens the album**: a grid of the saved posts with the image
+  at ~96px, title, `r/subreddit · u/who`, score, comments, and Remove. An album
+  that cannot be opened is a counter, not a collection.
+- Saving is one click from any post row, at the moment you notice it.
+- Deleting an album never deletes the accounts or posts in it.
+
+**How the data arrives:** the same two-source split as everything else. RSS
+enumerates their posts (read both sorts), the API supplies each post's score.
+Paced one account at a time with backoff; a 429 is waited out and never recorded
+as "they posted nothing". Store up to 25 posts per read, so history deepens over
+repeated reads rather than arriving complete.
 
 ## 7. Settings, Users, Audit Logs
 
