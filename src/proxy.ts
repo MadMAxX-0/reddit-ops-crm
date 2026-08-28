@@ -6,5 +6,8 @@ import { authConfig } from '@/auth.config'
 export default NextAuth(authConfig).auth
 
 export const config = {
-  matcher: ['/((?!api/auth|f/|_next/static|_next/image|favicon.ico|.*\\.svg$).*)'],
+  // `api/diag` is public on purpose: it answers whether the host can reach
+  // Reddit, which is the first thing anyone needs on a fresh deployment —
+  // before there is a login to get past.
+  matcher: ['/((?!api/auth|api/diag|f/|_next/static|_next/image|favicon.ico|.*\\.svg$).*)'],
 }

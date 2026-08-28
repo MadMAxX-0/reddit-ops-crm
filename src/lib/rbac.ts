@@ -64,24 +64,6 @@ export const NAV: NavItem[] = [
     prefix: true,
   },
 
-  { href: '/admin', label: 'Overview', icon: 'ShieldCheck', roles: MANAGEMENT, section: 'admin' },
-  // Where the per-VA account breakdowns live. They were on the dashboard, which
-  // made the front page a report about six people rather than a state of play.
-  {
-    href: '/admin/performance',
-    label: 'Performance',
-    icon: 'Trophy',
-    roles: MANAGEMENT,
-    section: 'admin',
-  },
-  {
-    href: '/admin/reports',
-    label: 'Reports',
-    icon: 'FileText',
-    roles: MANAGEMENT,
-    section: 'admin',
-    parked: true,
-  },
   {
     href: '/admin/scraper',
     label: 'Scraper',
@@ -105,6 +87,14 @@ export const NAV: NavItem[] = [
     roles: MANAGEMENT,
     section: 'admin',
     prefix: true,
+  },
+  {
+    href: '/admin/reports',
+    label: 'Reports',
+    icon: 'FileText',
+    roles: MANAGEMENT,
+    section: 'admin',
+    parked: true,
   },
   {
     href: '/admin/audit',
