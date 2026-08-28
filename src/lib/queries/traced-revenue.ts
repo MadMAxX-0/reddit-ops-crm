@@ -270,7 +270,7 @@ export async function tracedByCampaign(start: Date, end: Date) {
 /**
  * Counting from the claim side rather than the subscriber side, because fans who
  * subscribe and then churn are dropped from the subscriber list entirely —
- * 202 of SillySinx's 1,341 fans, 131 of them from inside the last month. Count
+ * 202 of one link's 1,341 fans, 131 of them from inside the last month. Count
  * only the fans still listed and a link that converts and loses them looks like
  * a link that never converted.
  *

@@ -306,7 +306,7 @@ export class RapidApiRedditProvider implements RedditProvider {
       if (!batch.length) {
         // An empty timeline is not an empty account. This host answers
         // `success: true` with zero posts for accounts that are posting
-        // several times a day — u/Knoxtrapph2019 returned 0 on five
+        // several times a day — one account returned 0 on five
         // consecutive calls and 20 on the sixth, including five posts made
         // that morning. Treating the first empty answer as truth is what
         // froze the post counts.

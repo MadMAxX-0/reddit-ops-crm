@@ -11,7 +11,7 @@ import { prisma } from '@/lib/prisma'
  * each hit with its date, so a window that has already passed still answers.
  *
  * It counts a step earlier in the funnel than OnlyFans does: a hit on the bio
- * link, not an arrival at OnlyFans. For u/SillySinx over the same month that is
+ * link, not an arrival at OnlyFans. For one account over the same month that is
  * 3,230 against 2,269 — the gap is people who clicked and never landed. Both
  * are real; they are not the same measurement, and the CRM labels this one
  * "clicks" because it is what the Reddit post actually earned.

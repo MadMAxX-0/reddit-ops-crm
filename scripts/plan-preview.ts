@@ -5,7 +5,7 @@ import { candidatesFor, planDay, type Strategy } from '../src/lib/posting/order'
 
 async function main() {
   const [rawUser, niche, rawSlots, rawStrategy] = process.argv.slice(2)
-  const username = (rawUser ?? 'Slow-Pea2845').replace(/^u\//, '')
+  const username = (rawUser ?? process.env.PLAN_DEFAULT_ACCOUNT ?? '').replace(/^u\//, '')
   const slots = Number(rawSlots ?? 15)
   const strategies: Strategy[] = rawStrategy
     ? [rawStrategy as Strategy]

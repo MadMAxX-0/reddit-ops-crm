@@ -26,7 +26,10 @@ async function main() {
   }
 
   /* eslint-disable @typescript-eslint/no-explicit-any */
-  const [links, groups] = await Promise.all([bouncy('/v1/links') as any, bouncy('/v1/groups') as any])
+  const [links, groups] = await Promise.all([
+    bouncy('/v1/links') as any,
+    bouncy('/v1/groups') as any,
+  ])
   const groupName = Object.fromEntries((groups.groups ?? []).map((g: any) => [g.id, g.name]))
 
   // model name → OF username, taken from what the bio links actually point at
@@ -65,7 +68,9 @@ async function main() {
   let linked = 0
   if (api) {
     const accounts = await api.listAccounts()
-    const byUsername = new Map(accounts.filter((a) => a.username).map((a) => [a.username!.toLowerCase(), a]))
+    const byUsername = new Map(
+      accounts.filter((a) => a.username).map((a) => [a.username!.toLowerCase(), a]),
+    )
     for (const c of await prisma.creator.findMany({ where: { ofUserId: null } })) {
       const hit = byUsername.get((c.ofUsername ?? '').toLowerCase())
       if (!hit) continue
@@ -89,7 +94,8 @@ async function main() {
   })
   if (still.length) {
     console.log('\nstill not connected to a live OF account:')
-    for (const c of still) console.log(`  ${c.stageName.padEnd(10)} of=${c.ofUsername || '(unknown)'}`)
+    for (const c of still)
+      console.log(`  ${c.stageName.padEnd(10)} of=${c.ofUsername || '(unknown)'}`)
   }
 
   await prisma.$disconnect()

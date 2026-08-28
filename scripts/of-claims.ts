@@ -16,4 +16,8 @@ async function main() {
   if (r.errors.length > 10) console.log(`  ... and ${r.errors.length - 10} more`)
   await prisma.$disconnect()
 }
-main().catch(async (e) => { console.error(e); await prisma.$disconnect(); process.exit(1) })
+main().catch(async (e) => {
+  console.error(e)
+  await prisma.$disconnect()
+  process.exit(1)
+})

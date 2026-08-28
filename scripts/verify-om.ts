@@ -5,7 +5,9 @@ import { prisma } from '../src/lib/prisma'
 async function main() {
   const start = new Date('2026-07-22T00:00:00Z')
   const end = new Date('2026-08-22T00:00:00Z')
-  const rows = await prisma.$queryRaw<Array<{ model: string; code: number; name: string; n: bigint }>>`
+  const rows = await prisma.$queryRaw<
+    Array<{ model: string; code: number; name: string; n: bigint }>
+  >`
     WITH arrivals AS (
       SELECT campaign_id, COALESCE(MIN(om_arrived), MIN(other_arrived)) AS arrived, fan_id
       FROM (
@@ -27,8 +29,14 @@ async function main() {
   `
   console.log('subs by link, 22 Jul – 21 Aug')
   for (const r of rows) {
-    console.log(`  ${(r.model ?? '').padEnd(15)} c${String(r.code).padEnd(4)} ${r.name.slice(0, 30).padEnd(32)} ${r.n}`)
+    console.log(
+      `  ${(r.model ?? '').padEnd(15)} c${String(r.code).padEnd(4)} ${r.name.slice(0, 30).padEnd(32)} ${r.n}`,
+    )
   }
   await prisma.$disconnect()
 }
-main().catch(async (e) => { console.error(e); await prisma.$disconnect(); process.exit(1) })
+main().catch(async (e) => {
+  console.error(e)
+  await prisma.$disconnect()
+  process.exit(1)
+})

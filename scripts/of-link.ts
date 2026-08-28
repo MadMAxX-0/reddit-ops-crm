@@ -15,9 +15,14 @@ async function main() {
     select: { stageName: true, ofUsername: true, ofUserId: true },
     orderBy: { stageName: 'asc' },
   })
-  for (const c of linked) console.log(`  ${c.stageName.padEnd(10)} → ${c.ofUsername} (${c.ofUserId})`)
-  if (r.unmatchedCreators.length) console.log(`\nmodels with no OF account: ${r.unmatchedCreators.join(', ')}`)
+  for (const c of linked)
+    console.log(`  ${c.stageName.padEnd(10)} → ${c.ofUsername} (${c.ofUserId})`)
+  if (r.unmatchedCreators.length)
+    console.log(`\nmodels with no OF account: ${r.unmatchedCreators.join(', ')}`)
   if (r.unmatchedApi.length) console.log(`OF accounts with no model:  ${r.unmatchedApi.join(', ')}`)
   await prisma.$disconnect()
 }
-main().catch((e) => { console.error(e); process.exit(1) })
+main().catch((e) => {
+  console.error(e)
+  process.exit(1)
+})

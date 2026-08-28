@@ -166,9 +166,9 @@ function Specimen() {
         </thead>
         <tbody className="text-14 text-fg-secondary">
           {[
-            ['u/SillySinx', '184', '$3,933.19'],
-            ['u/Slow-Pea2845', '41', '$1,072.00'],
-            ['u/mynameiscutie33', '9', '$618.45'],
+            ['u/example_one', '184', '$3,933.19'],
+            ['u/example_two', '41', '$1,072.00'],
+            ['u/example_three', '9', '$618.45'],
           ].map(([a, p, r]) => (
             <tr key={a} className="border-hairline border-t">
               <td className="mono py-1">{a}</td>

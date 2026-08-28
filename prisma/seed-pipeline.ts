@@ -11,7 +11,7 @@ import { encryptSecret } from '../src/lib/crypto'
 // The roster is local-only. Without it there is nothing to seed, which is the
 // correct behaviour on a fresh clone rather than an import error.
 import { PIPELINE } from './roster.local'
-import { ACCOUNTS } from './roster'
+import { ACCOUNTS } from './roster.local.data'
 
 const prisma = new PrismaClient({
   adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL! }),

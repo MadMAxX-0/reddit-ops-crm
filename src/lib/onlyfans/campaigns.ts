@@ -25,7 +25,7 @@ export function classifyCampaign(
 ): { isReddit: boolean; redditAccountId: string | null } {
   const hay = name.toLowerCase()
 
-  // Prefer the longest username that appears in the name: "u/SillySinx" and
+  // Prefer the longest username that appears in the name: "u/<handle>" and
   // "Reddit-mynameiscutie33" both name an account, in different house styles.
   // Short usernames are excluded because a four-letter handle turns up inside
   // unrelated words and a wrong account is worse than no account.

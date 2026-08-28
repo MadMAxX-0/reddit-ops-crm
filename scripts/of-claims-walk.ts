@@ -28,16 +28,20 @@ async function main() {
       ...(only.length ? { campaignCode: { in: only } } : {}),
     },
     select: {
-      id: true, ofUserId: true, ofUsername: true, ofCampaignId: true,
-      campaignCode: true, name: true, subs: true, claimersCached: true,
+      id: true,
+      ofUserId: true,
+      ofUsername: true,
+      ofCampaignId: true,
+      campaignCode: true,
+      name: true,
+      subs: true,
+      claimersCached: true,
     },
     orderBy: { subs: 'desc' },
   })
 
   // a link whose cache already holds nearly all its subscribers is left alone
-  const todo = links.filter(
-    (l) => l.ofCampaignId && l.subs > 0 && l.claimersCached < l.subs * 0.9,
-  )
+  const todo = links.filter((l) => l.ofCampaignId && l.subs > 0 && l.claimersCached < l.subs * 0.9)
   if (!todo.length) {
     console.log('every Reddit link is already covered — nothing to walk')
     await prisma.$disconnect()
@@ -47,7 +51,9 @@ async function main() {
   const pages = todo.reduce((n, l) => n + Math.ceil((l.subs - l.claimersCached) / 100), 0)
   console.log(`walking ${todo.length} link(s), about ${pages} platform requests:`)
   for (const l of todo) {
-    console.log(`  ${l.ofUsername} c${l.campaignCode} ${l.name} — ${l.subs} subs, ${l.claimersCached} cached`)
+    console.log(
+      `  ${l.ofUsername} c${l.campaignCode} ${l.name} — ${l.subs} subs, ${l.claimersCached} cached`,
+    )
   }
 
   for (const l of todo) {
@@ -87,4 +93,8 @@ async function main() {
   await prisma.$disconnect()
 }
 
-main().catch(async (e) => { console.error(e); await prisma.$disconnect(); process.exit(1) })
+main().catch(async (e) => {
+  console.error(e)
+  await prisma.$disconnect()
+  process.exit(1)
+})

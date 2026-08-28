@@ -47,3 +47,4 @@ next-env.d.ts
 
 # real account handles — never committed, see roster.local.example.ts
 prisma/roster.local.ts
+prisma/roster.local.data.ts

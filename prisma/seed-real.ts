@@ -17,7 +17,7 @@ import { PrismaPg } from '@prisma/adapter-pg'
 import { PrismaClient } from '../src/generated/prisma/client'
 import { redditProvider } from '../src/lib/reddit'
 import { encryptSecret } from '../src/lib/crypto'
-import { ACCOUNTS, FARMERS, MODELS, POSTERS } from './roster'
+import { ACCOUNTS, FARMERS, MODELS, POSTERS } from './roster.local.data'
 
 const prisma = new PrismaClient({
   adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL! }),
@@ -27,7 +27,10 @@ const BOUNDARY_TZ = process.env.WORKSPACE_DAY_BOUNDARY_TZ ?? 'Africa/Lagos'
 const FUNNEL_BASE = process.env.FUNNEL_BASE_URL ?? 'http://localhost:3000/f'
 
 function slugFor(username: string) {
-  return username.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 18)
+  return username
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '')
+    .slice(0, 18)
 }
 
 async function main() {
@@ -56,8 +59,13 @@ async function main() {
 
   const admin = await prisma.user.create({
     data: {
-      name: 'Admin', email: 'admin@agency.local', passwordHash, role: 'ADMIN',
-      timezone: 'Europe/Berlin', dailyAccountGoal: 0, dailyPostGoal: 0,
+      name: 'Admin',
+      email: 'admin@agency.local',
+      passwordHash,
+      role: 'ADMIN',
+      timezone: 'Europe/Berlin',
+      dailyAccountGoal: 0,
+      dailyPostGoal: 0,
     },
   })
 
@@ -65,11 +73,15 @@ async function main() {
     POSTERS.map((p) =>
       prisma.user.create({
         data: {
-          name: p.name, email: p.email, passwordHash, role: 'POSTER',
+          name: p.name,
+          email: p.email,
+          passwordHash,
+          role: 'POSTER',
           timezone: 'Europe/Berlin',
           // No goal set: the team measures paid days, not a post quota. A goal
           // of 0 renders as "not scored" rather than as a permanent miss.
-          dailyAccountGoal: 0, dailyPostGoal: 0,
+          dailyAccountGoal: 0,
+          dailyPostGoal: 0,
         },
       }),
     ),
@@ -79,7 +91,10 @@ async function main() {
     FARMERS.map((f) =>
       prisma.user.create({
         data: {
-          name: f.name, email: f.email, passwordHash, role: 'FARMER',
+          name: f.name,
+          email: f.email,
+          passwordHash,
+          role: 'FARMER',
           timezone: 'Europe/Berlin',
           dailyAccountGoal: f.focus === 'creation' ? 5 : 0,
           dailyPostGoal: 0,
@@ -146,7 +161,9 @@ async function main() {
         suspendedAt: suspended ? new Date() : null,
         assignedCreatorId: creator.id,
         assignedPosterId: suspended ? null : poster.id,
-        healthScore: suspended ? 0 : Math.min(99, 25 + Math.min(40, ageDays / 4) + Math.min(30, karmaPost / 200)),
+        healthScore: suspended
+          ? 0
+          : Math.min(99, 25 + Math.min(40, ageDays / 4) + Math.min(30, karmaPost / 200)),
         lastCheckedAt: new Date(),
         pollTier: 'WARM',
         nextPollAt: new Date(),
@@ -186,7 +203,9 @@ async function main() {
   }
 
   console.log(`\n  workspace: ${workspace.name} · day boundary ${workspace.dayBoundaryTimezone}`)
-  console.log(`  ${posters.length} posters · ${farmers.length} farming VAs · ${creators.length} models · ${ACCOUNTS.length} accounts (${live} live)`)
+  console.log(
+    `  ${posters.length} posters · ${farmers.length} farming VAs · ${creators.length} models · ${ACCOUNTS.length} accounts (${live} live)`,
+  )
   console.log(`  sign in: ${admin.email} / password123`)
   console.log('\n  next: npm run job -- discovery    (pulls the real post history)')
   console.timeEnd('seed:real')

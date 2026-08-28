@@ -39,14 +39,18 @@ async function main() {
       if (!snap.exists) {
         missing++
         if (a.flag !== 'BANNED') {
-          disagreements.push(`  u/${a.username.padEnd(22)} ${a.pipelineStage.padEnd(8)} not on Reddit, but flagged "${a.flag}"`)
+          disagreements.push(
+            `  u/${a.username.padEnd(22)} ${a.pipelineStage.padEnd(8)} not on Reddit, but flagged "${a.flag}"`,
+          )
         }
         continue
       }
 
       alive++
       if (a.flag === 'BANNED') {
-        disagreements.push(`  u/${a.username.padEnd(22)} ${a.pipelineStage.padEnd(8)} flagged Banned, but the profile resolves`)
+        disagreements.push(
+          `  u/${a.username.padEnd(22)} ${a.pipelineStage.padEnd(8)} flagged Banned, but the profile resolves`,
+        )
       }
 
       await prisma.redditAccount.update({
@@ -66,7 +70,9 @@ async function main() {
 
   console.log(`\n${alive} resolve on Reddit · ${missing} do not · ${errors} errors`)
   if (disagreements.length) {
-    console.log(`\n${disagreements.length} disagree with the pipeline flag — nothing was changed automatically:`)
+    console.log(
+      `\n${disagreements.length} disagree with the pipeline flag — nothing was changed automatically:`,
+    )
     for (const d of disagreements) console.log(d)
   } else {
     console.log('\nevery pipeline flag agrees with Reddit')

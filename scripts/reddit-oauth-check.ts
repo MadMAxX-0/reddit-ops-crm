@@ -29,7 +29,7 @@ async function main() {
       `macos:reddit-ops-crm:1.0 (by /u/${process.env.REDDIT_USERNAME})`,
   })
 
-  const who = process.argv[2] ?? 'Knoxtrapph2019'
+  const who = process.argv[2] ?? 'spez'
   const acct = await p.getAccount(who)
   console.log(`u/${who}: exists=${acct.exists} karma=${acct.karmaPost}/${acct.karmaComment}`)
 

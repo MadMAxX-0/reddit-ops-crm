@@ -20,7 +20,9 @@ async function main() {
   })
   const nameBy = new Map(creators.map((c) => [c.ofUserId!, c.stageName]))
 
-  for (const preset of (process.argv[2] ? [process.argv[2]] : ['24h', '7d', '30d']) as RangePreset[]) {
+  for (const preset of (process.argv[2]
+    ? [process.argv[2]]
+    : ['24h', '7d', '30d']) as RangePreset[]) {
     const range = resolveRange(preset, tz)
     console.log(`\n${preset} · ${range.label}`)
     console.log(
@@ -50,4 +52,8 @@ async function main() {
   }
   await prisma.$disconnect()
 }
-main().catch(async (e) => { console.error(e); await prisma.$disconnect(); process.exit(1) })
+main().catch(async (e) => {
+  console.error(e)
+  await prisma.$disconnect()
+  process.exit(1)
+})

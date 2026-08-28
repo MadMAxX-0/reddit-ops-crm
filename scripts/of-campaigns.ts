@@ -27,10 +27,17 @@ async function main() {
   for (const e of earnings.errors) console.log(`  ! ${e}`)
 
   const reddit = await prisma.ofCampaign.findMany({
-    where: { isDeleted: false, OR: [{ redditOverride: true }, { redditOverride: null, isReddit: true }] },
+    where: {
+      isDeleted: false,
+      OR: [{ redditOverride: true }, { redditOverride: null, isReddit: true }],
+    },
     orderBy: [{ ofUsername: 'asc' }, { subs: 'desc' }],
     select: {
-      campaignCode: true, name: true, ofUsername: true, clicks: true, subs: true,
+      campaignCode: true,
+      name: true,
+      ofUsername: true,
+      clicks: true,
+      subs: true,
       redditAccount: { select: { username: true, modelLabel: true } },
     },
   })
@@ -41,7 +48,9 @@ async function main() {
       model = c.ofUsername ?? ''
       console.log(`\n  ${model}`)
     }
-    const tied = c.redditAccount ? `  ← u/${c.redditAccount.username} (${c.redditAccount.modelLabel})` : ''
+    const tied = c.redditAccount
+      ? `  ← u/${c.redditAccount.username} (${c.redditAccount.modelLabel})`
+      : ''
     console.log(
       `    c${String(c.campaignCode).padEnd(4)} ${c.name.slice(0, 40).padEnd(42)}` +
         `clicks ${String(c.clicks).padStart(7)}   subs ${String(c.subs).padStart(6)}${tied}`,

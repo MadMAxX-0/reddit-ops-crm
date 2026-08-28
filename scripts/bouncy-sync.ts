@@ -11,9 +11,15 @@ async function main() {
     process.exit(1)
   }
   const r = await syncBouncy(client)
-  console.log(`${r.links} bouncy links · ${r.matched} matched to a tracking link · ${r.dayRows} click-days`)
+  console.log(
+    `${r.links} bouncy links · ${r.matched} matched to a tracking link · ${r.dayRows} click-days`,
+  )
   for (const u of r.unmatched) console.log(`  unmatched: ${u}`)
   for (const e of r.errors) console.log(`  ! ${e}`)
   await prisma.$disconnect()
 }
-main().catch(async (e) => { console.error(e); await prisma.$disconnect(); process.exit(1) })
+main().catch(async (e) => {
+  console.error(e)
+  await prisma.$disconnect()
+  process.exit(1)
+})

@@ -48,8 +48,14 @@ async function main() {
   `
   console.log('\n  what the Reddit money is:')
   for (const k of byKind) {
-    console.log(`    ${k.kind.padEnd(16)} ${money(Number(k.cents)).padStart(11)}  ${k.txs} payments`)
+    console.log(
+      `    ${k.kind.padEnd(16)} ${money(Number(k.cents)).padStart(11)}  ${k.txs} payments`,
+    )
   }
   await prisma.$disconnect()
 }
-main().catch(async (e) => { console.error(e); await prisma.$disconnect(); process.exit(1) })
+main().catch(async (e) => {
+  console.error(e)
+  await prisma.$disconnect()
+  process.exit(1)
+})

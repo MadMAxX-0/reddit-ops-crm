@@ -16,7 +16,7 @@ import {
  *
  * This exists because the third-party host cannot be relied on to list posts.
  * It answers `success: true` with an empty array for accounts that are posting
- * several times a day, in streaks lasting tens of minutes — u/Knoxtrapph2019
+ * several times a day, in streaks lasting tens of minutes — one account
  * returned zero on five consecutive calls, twenty on the sixth (including five
  * posts made that morning), then zero again for the next twenty minutes. There
  * is no header, sort order or retry pattern that changes it. Reddit's own
