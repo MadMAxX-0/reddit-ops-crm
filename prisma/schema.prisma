@@ -1,0 +1,1355 @@
+// Reddit Operations CRM — data model
+//
+// Conventions enforced everywhere:
+//   * all money is an integer number of CENTS (never a float, never a Decimal)
+//   * all DateTime columns are stored in UTC; the display timezone is a user
+//     setting and the *bucketing* timezone is a workspace setting (see Workspace)
+//   * metric tables are append-only so a value can never be silently rewritten
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum Role {
+  POSTER
+  FARMER
+  MANAGER
+  ADMIN
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum CreatorStatus {
+  ACTIVE
+  PAUSED
+  CHURNED
+}
+
+enum AccountStatus {
+  WARMING // farmed, not yet posting-ready
+  READY // meets karma/age minimums, unassigned
+  ACTIVE // assigned to a poster and in rotation
+  SHADOWBANNED
+  SUSPENDED
+  RETIRED
+}
+
+enum CreationOutcome {
+  SUCCESS
+  FAILED_CREATE
+  FAILED_VERIFY
+  FAILED_CAPTCHA
+}
+
+enum SubredditTier {
+  S
+  A
+  B
+  C
+}
+
+enum SubredditStatus {
+  ACTIVE
+  RISKY
+  BANNED_FOR_US
+}
+
+/**
+ * What a subreddit is FOR. The same account posts to both kinds — a promo
+ * account still farms karma between drops — so this cannot be inferred from the
+ * account, and `isNsfw` does not separate them either: r/Shrek and r/spongebob
+ * come back flagged NSFW while r/parrots does not. It is a judgement about the
+ * subreddit and it is stored as one.
+ */
+enum SubredditPurpose {
+  /// model content goes here — this is the work the dashboard measures
+  PROMO
+  /// karma farming: memes, animals, hentai. Real work, but not reach.
+  FARMING
+}
+
+enum PostStatus {
+  LIVE
+  REMOVED
+  DELETED
+  SHADOWBANNED
+}
+
+/**
+ * WHO took a post down. Reddit says so in `removed_by_category`, and the
+ * distinction is the whole diagnosis: a moderator removal means the post broke
+ * a subreddit's rules and the account is fine; a Reddit-side removal means the
+ * site's own spam filter caught it, which is how a shadowban announces itself.
+ * Treating them as one number hides an account dying.
+ */
+enum RemovedBy {
+  /// the subreddit removed it — a human mod, automod, or community ops
+  MOD
+  /// Reddit itself: site-wide spam filter, anti-evil ops, or a takedown
+  REDDIT
+  /// the poster deleted it
+  AUTHOR
+  /// removed, but nothing said by whom — usually a 404 on re-check. Its own
+  /// bucket on purpose: an unknown that quietly joins MOD or REDDIT is a lie.
+  UNKNOWN
+}
+
+enum AttributionStatus {
+  RESOLVED
+  NEEDS_REVIEW
+}
+
+enum MediaType {
+  IMAGE
+  VIDEO
+  GALLERY
+  LINK
+  TEXT
+}
+
+enum TrackedLinkStatus {
+  ACTIVE
+  RETIRED
+}
+
+enum FunnelEventType {
+  LANDED
+  OUTBOUND
+}
+
+enum AttributionType {
+  EXACT
+  INFERRED
+}
+
+enum ConversionType {
+  FREE_SUB
+  TRIAL
+  PAID_SUB
+  PPV
+  TIP
+}
+
+enum ReportScope {
+  GLOBAL
+  CREATOR
+  VA
+  SUBREDDIT
+}
+
+enum ScraperJobType {
+  POST_DISCOVERY
+  POST_METRICS
+  REMOVAL_DETECTION
+  ACCOUNT_HEALTH
+  SUBREDDIT_RULES
+  OF_CONVERSION_SYNC
+}
+
+enum ScraperJobStatus {
+  QUEUED
+  RUNNING
+  SUCCESS
+  FAILED
+  DEAD_LETTER
+}
+
+/// The stage an account is at in the pipeline the team works from.
+///
+/// Creating → Farming → Active. "Active" means the account is assigned to a
+/// creator and in rotation with a poster; it is what puts the account on the
+/// grid.
+enum PipelineStage {
+  CREATING
+  FARMING
+  ACTIVE
+}
+
+/// The flag column. "Banned" is the one that matters; the rest is room to grow.
+enum AccountFlag {
+  NONE
+  BANNED
+  SHADOWBANNED
+  ON_HOLD
+}
+
+enum PollTier {
+  HOT
+  WARM
+  COLD
+  DORMANT
+}
+
+enum Severity {
+  INFO
+  WARN
+  CRITICAL
+}
+
+enum TaskStatus {
+  OPEN
+  DONE
+  DISMISSED
+}
+
+// ---------------------------------------------------------------------------
+// Workspace + people
+// ---------------------------------------------------------------------------
+
+/// Single-row-per-tenant settings. dayBoundaryTimezone is what "a day" means
+/// for every daily aggregate in the product; it is deliberately NOT the
+/// server's timezone and NOT the viewer's timezone.
+model Workspace {
+  id                  String   @id @default(cuid())
+  name                String
+  dayBoundaryTimezone String   @default("Africa/Lagos")
+  funnelBaseUrl       String   @default("http://localhost:3000/f")
+  /// attribution window in hours for matching a Conversion back to a landing
+  attributionWindowH  Int      @default(72)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+}
+
+model User {
+  id               String     @id @default(cuid())
+  name             String
+  email            String     @unique
+  passwordHash     String
+  role             Role
+  /// IANA zone used to RENDER timestamps for this user
+  timezone         String     @default("Asia/Dubai")
+  /// what this VA is paid per account they create, in integer cents. Reddit
+  /// account creation is piece work here, so the day's pay is a count times a
+  /// rate rather than anything anyone has to log.
+  payPerAccountCents Int @default(0)
+  dailyAccountGoal Int        @default(0)
+  /// farming is measured over a month, not a day — an account takes weeks to
+  /// warm, so a daily target for it would only ever measure impatience
+  monthlyAccountGoal Int      @default(0)
+  dailyPostGoal    Int        @default(0)
+  status           UserStatus @default(ACTIVE)
+  hourlyCostCents  Int        @default(0)
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
+
+  createdAccounts  RedditAccount[]          @relation("AccountCreatedBy")
+  farmedAccounts   RedditAccount[]          @relation("AccountFarmedBy")
+  assignedAccounts RedditAccount[]          @relation("AccountAssignedPoster")
+  creationAttempts AccountCreationAttempt[]
+  farmingSessions  FarmingSession[]
+  posts            Post[]
+  assignments      AccountAssignment[]
+  creators         Creator[]                @relation("CreatorPosters")
+  auditLogs        AuditLog[]
+  reports          Report[]
+  notifications    Notification[]
+
+  assignedTasks ReportTask[] @relation("TaskAssignee")
+  createdTasks  ReportTask[] @relation("TaskCreator")
+
+  @@index([role, status])
+  subredditNiches SubredditNiche[]
+  spyAlbums SpyAlbum[]
+}
+
+model Creator {
+  id              String        @id @default(cuid())
+  stageName       String        @unique
+  ofUsername      String
+  /// The OnlyFans user id as TheOnlyAPI reports it. This is the join key to
+  /// subscriber counts and earnings; without it a model has a name and nothing
+  /// else.
+  ofUserId        String?       @unique
+  avatarUrl       String?
+  revenueSharePct Int           @default(70)
+  status          CreatorStatus @default(ACTIVE)
+  niche           String?
+  notes           String?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  /// posters allowed to work this creator (spec: assignedPosterIds[])
+  posters           User[]                 @relation("CreatorPosters")
+  accounts          RedditAccount[]
+  assignments       AccountAssignment[]
+  posts             Post[]
+  conversions       Conversion[]
+  followerSnapshots FollowerSnapshot[]
+  ofSnapshots       OfSubscriberSnapshot[]
+  ofCampaigns       OfCampaign[]
+
+  @@index([status])
+}
+
+// ---------------------------------------------------------------------------
+// Inventory: proxies, reddit accounts, creation attempts, farming
+// ---------------------------------------------------------------------------
+
+model Proxy {
+  id          String   @id @default(cuid())
+  label       String   @unique
+  host        String
+  port        Int
+  provider    String?
+  countryCode String?
+  costCents   Int      @default(0)
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  accounts RedditAccount[]
+  attempts AccountCreationAttempt[]
+}
+
+model RedditAccount {
+  id                 String        @id @default(cuid())
+  username           String        @unique
+  /// AES-256-GCM ciphertext. Never returned to the client unmasked; every
+  /// reveal writes an AuditLog row.
+  passwordEnc        String
+  emailAddress       String
+  emailProvider      String?
+  emailVerified      Boolean       @default(false)
+  phoneVerified      Boolean       @default(false)
+  createdById        String?
+  createdAt          DateTime      @default(now())
+  /// birth date on Reddit, which is NOT createdAt (we may import old accounts)
+  redditCreatedAt    DateTime?
+  karmaPost          Int           @default(0)
+  karmaComment       Int           @default(0)
+  /// profile followers, i.e. subscribers to the account's own u_ subreddit.
+  /// Reddit exposes the count but never who they are, so this can never be
+  /// attributed to the post that won them.
+  followers          Int           @default(0)
+  proxyId            String?
+  status             AccountStatus @default(WARMING)
+  assignedCreatorId  String?
+  assignedPosterId   String?
+  /// the VA warming this account, distinct from the VA who created it
+  farmedById         String?
+  lastCheckedAt      DateTime?
+  shadowbanned       Boolean       @default(false)
+  suspendedAt        DateTime?
+  verifiedSubreddits String[]      @default([])
+  /// How this account is labelled on the grid — the model it fronts, exactly as
+  /// the team writes it ("ZoeMain", "Pinky2nd", "Lali"). Stored verbatim rather
+  /// than derived from the creator: the team's own labelling is not systematic,
+  /// and reproducing what they wrote beats normalising it into something they
+  /// then have to translate back.
+  modelLabel         String?
+  /// Which device profile the account lives on — an Adspower profile by country
+  /// or a physical handset. Null means it has not been placed on one yet.
+  device             String?
+  pipelineStage      PipelineStage @default(CREATING)
+  flag               AccountFlag   @default(NONE)
+  healthScore        Int           @default(50)
+  notes              String?
+  updatedAt          DateTime      @updatedAt
+
+  // --- discovery bookkeeping (§6) ---
+  pollTier             PollTier  @default(DORMANT)
+  lastPolledAt         DateTime?
+  nextPollAt           DateTime?
+  lastPostAt           DateTime?
+  /// karma moved but no post was discovered -> something was posted and removed
+  /// before we saw it. Surfaced as "suspected missed posts", never hidden.
+  suspectedMissedPosts Int       @default(0)
+  /// When this account's whole submitted history was walked, as opposed to the
+  /// incremental poll. Until 2026-08-25 a first-ever poll only reached back 45
+  /// days, and `since` only ever moves forward, so any account that posted
+  /// before its first poll was invisible permanently. That is exactly the
+  /// farming accounts: they build karma for months before going into rotation.
+  historyWalkedAt      DateTime?
+
+  createdBy       User?                   @relation("AccountCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  farmedBy        User?                   @relation("AccountFarmedBy", fields: [farmedById], references: [id], onDelete: SetNull)
+  assignedPoster  User?                   @relation("AccountAssignedPoster", fields: [assignedPosterId], references: [id], onDelete: SetNull)
+  assignedCreator Creator?                @relation(fields: [assignedCreatorId], references: [id], onDelete: SetNull)
+  proxy           Proxy?                  @relation(fields: [proxyId], references: [id], onDelete: SetNull)
+  assignments     AccountAssignment[]
+  posts           Post[]
+  comments        RedditComment[]
+  farmingSessions FarmingSession[]
+  creationAttempt AccountCreationAttempt?
+  trackedLinks    TrackedLink[]
+  healthSnapshots AccountHealthSnapshot[]
+  ofCampaigns     OfCampaign[]
+
+  @@index([status])
+  @@index([assignedPosterId, status])
+  @@index([assignedCreatorId, status])
+  @@index([createdById, createdAt])
+  @@index([nextPollAt, pollTier])
+  @@index([healthScore])
+}
+
+/// Every attempt a farmer makes, successful or not. The daily counter on the
+/// Account Creation page is DERIVED from these rows — there is no stored
+/// incrementing integer anywhere, because those drift.
+model AccountCreationAttempt {
+  id              String          @id @default(cuid())
+  farmerId        String
+  /// the workspace-day this attempt belongs to, as a plain date, already
+  /// bucketed by Workspace.dayBoundaryTimezone at write time
+  batchDate       DateTime        @db.Date
+  outcome         CreationOutcome
+  redditAccountId String?         @unique
+  failureReason   String?
+  proxyId         String?
+  costCents       Int             @default(0)
+  refundedCents   Int             @default(0)
+  createdAt       DateTime        @default(now())
+
+  farmer        User           @relation(fields: [farmerId], references: [id], onDelete: Cascade)
+  redditAccount RedditAccount? @relation(fields: [redditAccountId], references: [id], onDelete: SetNull)
+  proxy         Proxy?         @relation(fields: [proxyId], references: [id], onDelete: SetNull)
+
+  @@index([farmerId, batchDate])
+  @@index([batchDate, outcome])
+}
+
+model FarmingSession {
+  id                String    @id @default(cuid())
+  farmerId          String
+  redditAccountId   String
+  startedAt         DateTime
+  endedAt           DateTime?
+  durationMin       Int       @default(0)
+  commentsMade      Int       @default(0)
+  postsMade         Int       @default(0)
+  karmaBefore       Int       @default(0)
+  karmaAfter        Int       @default(0)
+  subredditsTouched String[]  @default([])
+  notes             String?
+  createdAt         DateTime  @default(now())
+
+  farmer        User          @relation(fields: [farmerId], references: [id], onDelete: Cascade)
+  redditAccount RedditAccount @relation(fields: [redditAccountId], references: [id], onDelete: Cascade)
+
+  @@index([farmerId, startedAt])
+  @@index([redditAccountId, startedAt])
+}
+
+model AccountHealthSnapshot {
+  id              String   @id @default(cuid())
+  redditAccountId String
+  capturedAt      DateTime @default(now())
+  karmaPost       Int
+  karmaComment    Int
+  followers       Int      @default(0)
+  shadowbanned    Boolean
+  suspended       Boolean
+  healthScore     Int
+
+  redditAccount RedditAccount @relation(fields: [redditAccountId], references: [id], onDelete: Cascade)
+
+  @@index([redditAccountId, capturedAt])
+}
+
+// ---------------------------------------------------------------------------
+// Subreddits
+// ---------------------------------------------------------------------------
+
+model Subreddit {
+  id                   String          @id @default(cuid())
+  name                 String          @unique
+  subscribers          Int             @default(0)
+  isNsfw               Boolean         @default(true)
+  verificationRequired Boolean         @default(false)
+  minKarma             Int             @default(0)
+  minAccountAgeDays    Int             @default(0)
+  postCooldownHours    Int             @default(24)
+  allowedFlairs        String[]        @default([])
+  rulesSummary         String?
+  /// promo or farming. Defaults to PROMO so a newly discovered subreddit counts
+  /// until someone says otherwise — the alternative silently drops real work.
+  purpose              SubredditPurpose @default(PROMO)
+  tier                 SubredditTier   @default(C)
+  tierIsManual         Boolean         @default(false)
+  status               SubredditStatus @default(ACTIVE)
+  lastScrapedAt        DateTime?
+  createdAt            DateTime        @default(now())
+  updatedAt            DateTime        @updatedAt
+
+  posts Post[]
+
+  @@index([tier, status])
+  @@index([status])
+}
+
+// ---------------------------------------------------------------------------
+// Attribution history — the reason old numbers stay true
+// ---------------------------------------------------------------------------
+
+/// Time-boxed custody of an account. A post is credited to whoever held the
+/// account at postedAt, NOT whoever holds it today. Without this table, every
+/// reassignment silently rewrites past performance.
+model AccountAssignment {
+  id              String    @id @default(cuid())
+  redditAccountId String
+  creatorId       String
+  posterId        String
+  startedAt       DateTime
+  endedAt         DateTime?
+
+  redditAccount RedditAccount @relation(fields: [redditAccountId], references: [id], onDelete: Cascade)
+  creator       Creator       @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+  poster        User          @relation(fields: [posterId], references: [id], onDelete: Cascade)
+
+  @@index([redditAccountId, startedAt])
+  @@index([posterId, startedAt])
+  @@index([creatorId, startedAt])
+}
+
+// ---------------------------------------------------------------------------
+// Posts + metrics — every row here is created by the scraper
+// ---------------------------------------------------------------------------
+
+/// Discovered, never entered. There is no create-post form in this product.
+/// creatorId/posterId are resolved from AccountAssignment as of postedAt.
+model Post {
+  id                String            @id @default(cuid())
+  redditPostId      String            @unique
+  redditAccountId   String
+  subredditId       String
+  creatorId         String?
+  posterId          String?
+  title             String
+  flair             String?
+  mediaType         MediaType         @default(IMAGE)
+  url               String?
+  /// the media itself, so a post can be shown rather than only described
+  mediaUrl          String?
+  /// a small preview of the media, when Reddit offers one
+  thumbnailUrl      String?
+  /// the body of a self post
+  selftext          String?
+  /// from Reddit
+  postedAt          DateTime
+  /// when our scraper first saw it. (firstSeenAt - postedAt) is discovery lag.
+  firstSeenAt       DateTime          @default(now())
+  status            PostStatus        @default(LIVE)
+  attributionStatus AttributionStatus @default(RESOLVED)
+  removedAt         DateTime?
+  removalReason     String?
+  /// classified from `removalReason`, which holds Reddit's raw
+  /// `removed_by_category`. Null while the post is live.
+  removedBy         RemovedBy?
+  /// Consecutive job runs where the post could not be fetched at all.
+  /// A 404 is NOT evidence of removal here — the host 404s posts that are
+  /// plainly live, in streaks lasting minutes, and a retry seconds later hits
+  /// the same streak. Seven of eleven removals in one three-hour window were
+  /// fiction because of it. A post is only written off after three separate
+  /// runs, on different passes, all fail to see it. Any successful read resets
+  /// this to zero.
+  missStreak        Int       @default(0)
+  lastMetricAt      DateTime?
+  /// denormalised latest snapshot, kept for list-view performance at 50k+ rows.
+  /// The truth is always PostMetric; these are a cache written by the metrics job.
+  latestUpvotes     Int               @default(0)
+  latestComments    Int               @default(0)
+  latestUpvoteRatio Float             @default(0)
+
+  redditAccount RedditAccount @relation(fields: [redditAccountId], references: [id], onDelete: Cascade)
+  subreddit     Subreddit     @relation(fields: [subredditId], references: [id], onDelete: Restrict)
+  creator       Creator?      @relation(fields: [creatorId], references: [id], onDelete: SetNull)
+  poster        User?         @relation(fields: [posterId], references: [id], onDelete: SetNull)
+  metrics       PostMetric[]
+  funnelEvents  FunnelEvent[]
+
+  @@index([postedAt])
+  @@index([posterId, postedAt])
+  @@index([creatorId, postedAt])
+  @@index([subredditId, postedAt])
+  @@index([redditAccountId, postedAt])
+  @@index([status, postedAt])
+  @@index([attributionStatus])
+}
+
+/// Append-only time series. Never updated, never deleted — this is what lets
+/// you plot an upvote curve and see a post die three hours after it peaked.
+/**
+ * A comment one of our accounts left.
+ *
+ * Added 2026-08-27. Until then the CRM measured posts only, which made four of
+ * the thirteen accounts in rotation look idle when they were not: u/FrostedKoinami
+ * has 734 comment karma against 46 post karma, and `getUserOverview` returns
+ * nine items for it, all of them comments. Farming is done in comments and the
+ * gate on the biggest subreddit we have — r/FemBoys — is *comment* karma, so an
+ * operation that cannot see comments cannot see either.
+ */
+model RedditComment {
+  id              String    @id @default(cuid())
+  redditAccountId String
+  /// Reddit's fullname, e.g. t1_abc123 — the natural key
+  redditCommentId String    @unique
+  subreddit       String
+  /// the post it sits under, when the API gives it
+  linkTitle       String?
+  permalink       String?
+  /// trimmed: a comment is evidence of activity, not content to archive
+  body            String?
+  score           Int       @default(0)
+  postedAt        DateTime
+  firstSeenAt     DateTime  @default(now())
+  lastMetricAt    DateTime?
+
+  redditAccount RedditAccount @relation(fields: [redditAccountId], references: [id], onDelete: Cascade)
+
+  @@index([redditAccountId, postedAt])
+  @@index([subreddit])
+}
+
+model PostMetric {
+  id             String   @id @default(cuid())
+  postId         String
+  capturedAt     DateTime @default(now())
+  upvotes        Int
+  upvoteRatio    Float
+  comments       Int
+  rank           Int?
+  estimatedViews Int?
+
+  post Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@index([postId, capturedAt])
+  @@index([capturedAt])
+}
+
+// ---------------------------------------------------------------------------
+// Deep links, funnel, revenue
+// ---------------------------------------------------------------------------
+
+/// One per Reddit account, issued at account creation, never reassigned.
+/// The slug lives in the funnel URL that goes in the Reddit bio.
+model TrackedLink {
+  id               String            @id @default(cuid())
+  slug             String            @unique
+  redditAccountId  String
+  /// join key to OnlyFans revenue data — minted one per Reddit account
+  ofTrackingLinkId String?           @unique
+  funnelUrl        String
+  issuedAt         DateTime          @default(now())
+  retiredAt        DateTime?
+  status           TrackedLinkStatus @default(ACTIVE)
+
+  redditAccount RedditAccount @relation(fields: [redditAccountId], references: [id], onDelete: Cascade)
+  funnelEvents  FunnelEvent[]
+  conversions   Conversion[]
+
+  @@index([redditAccountId, status])
+}
+
+model FunnelEvent {
+  id                String          @id @default(cuid())
+  trackedLinkId     String
+  type              FunnelEventType
+  attributedPostId  String?
+  attributionType   AttributionType @default(EXACT)
+  /// when several of an account's posts were live at once we split by upvote
+  /// velocity; this is that post's share of the landing (1.0 when EXACT)
+  attributionWeight Float           @default(1)
+  ts                DateTime        @default(now())
+  sessionHash       String
+  ipHash            String
+  countryCode       String?
+  deviceType        String?
+  userAgentHash     String?
+  isBot             Boolean         @default(false)
+  referrer          String?
+
+  trackedLink    TrackedLink @relation(fields: [trackedLinkId], references: [id], onDelete: Cascade)
+  attributedPost Post?       @relation(fields: [attributedPostId], references: [id], onDelete: SetNull)
+
+  @@index([trackedLinkId, ts])
+  @@index([attributedPostId, type])
+  @@index([ts, type])
+  @@index([sessionHash])
+}
+
+model Conversion {
+  id               String         @id @default(cuid())
+  ofTrackingLinkId String
+  trackedLinkId    String?
+  creatorId        String
+  type             ConversionType
+  amountCents      Int            @default(0)
+  occurredAt       DateTime
+  externalId       String         @unique
+  syncedAt         DateTime       @default(now())
+
+  trackedLink TrackedLink? @relation(fields: [trackedLinkId], references: [id], onDelete: SetNull)
+  creator     Creator      @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+
+  @@index([creatorId, occurredAt])
+  @@index([trackedLinkId, occurredAt])
+  @@index([occurredAt, type])
+}
+
+model FollowerSnapshot {
+  id            String   @id @default(cuid())
+  creatorId     String
+  ts            DateTime @default(now())
+  followerCount Int
+  source        String   @default("OF_API")
+
+  creator Creator @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+
+  @@index([creatorId, ts])
+}
+
+// ---------------------------------------------------------------------------
+// Reporting, audit, jobs, notifications
+// ---------------------------------------------------------------------------
+
+model Report {
+  id            String      @id @default(cuid())
+  scope         ReportScope
+  scopeId       String?
+  kind          String
+  periodStart   DateTime
+  periodEnd     DateTime
+  headline      String?
+  summaryMd     String
+  findingsJson  Json
+  /// the exact aggregated context object handed to the model, stored so any
+  /// number in a report can be traced back to its source
+  contextJson   Json
+  generatedAt   DateTime    @default(now())
+  generatedById String?
+  model         String
+  version       Int         @default(1)
+
+  generatedBy User?        @relation(fields: [generatedById], references: [id], onDelete: SetNull)
+  tasks       ReportTask[]
+
+  @@index([scope, scopeId, periodStart])
+  @@index([generatedAt])
+}
+
+/// A recommendation someone decided to act on. Kept separate from the report so
+/// the report itself stays immutable — a report is a record of what was true at
+/// a moment, and editing it to tick a box would destroy that.
+model ReportTask {
+  id           String     @id @default(cuid())
+  reportId     String
+  /// index into the report's recommendations array
+  index        Int
+  action       String
+  rationale    String
+  effort       String
+  ownerRole    Role
+  assignedToId String?
+  status       TaskStatus @default(OPEN)
+  createdById  String?
+  createdAt    DateTime   @default(now())
+  completedAt  DateTime?
+
+  report     Report @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  assignedTo User?  @relation("TaskAssignee", fields: [assignedToId], references: [id], onDelete: SetNull)
+  createdBy  User?  @relation("TaskCreator", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@unique([reportId, index])
+  @@index([status, ownerRole])
+  @@index([assignedToId, status])
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  actorId    String?
+  action     String
+  entityType String
+  entityId   String?
+  before     Json?
+  after      Json?
+  ip         String?
+  ts         DateTime @default(now())
+
+  actor User? @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([ts])
+  @@index([actorId, ts])
+  @@index([entityType, entityId])
+}
+
+model ScraperJob {
+  id             String           @id @default(cuid())
+  type           ScraperJobType
+  target         String?
+  status         ScraperJobStatus @default(QUEUED)
+  startedAt      DateTime         @default(now())
+  finishedAt     DateTime?
+  itemsProcessed Int              @default(0)
+  errorsCount    Int              @default(0)
+  lastError      String?
+
+  @@index([type, startedAt])
+  @@index([status])
+}
+
+/// Per-job-type runtime config so intervals and rate limits are tunable
+/// against the real rate limit instead of being compiled-in constants.
+model ScraperConfig {
+  id                 String         @id @default(cuid())
+  type               ScraperJobType @unique
+  enabled            Boolean        @default(true)
+  paused             Boolean        @default(false)
+  intervalSec        Int
+  rateLimitPerMin    Int            @default(60)
+  maxAttempts        Int            @default(4)
+  /// tier intervals in seconds, only meaningful for POST_DISCOVERY
+  hotIntervalSec     Int            @default(600)
+  warmIntervalSec    Int            @default(3600)
+  coldIntervalSec    Int            @default(21600)
+  dormantIntervalSec Int            @default(86400)
+  updatedAt          DateTime       @updatedAt
+}
+
+model Notification {
+  id         String    @id @default(cuid())
+  userId     String
+  severity   Severity  @default(INFO)
+  title      String
+  body       String?
+  href       String?
+  entityType String?
+  entityId   String?
+  readAt     DateTime?
+  createdAt  DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, readAt, createdAt])
+}
+
+/// Point-in-time subscriber counts pulled from the OnlyFans API, one row per
+/// creator per sync. Append-only like every other metric table here, so the
+/// subscriber curve survives.
+model OfSubscriberSnapshot {
+  id              String   @id @default(cuid())
+  /// null for a panel account that is not one of our models — those are still
+  /// recorded, because the total is the denominator every traffic-source share
+  /// is measured against
+  creatorId       String?
+  ofUserId        String?
+  ts              DateTime @default(now())
+  activeSubs      Int
+  expiredSubs     Int
+  totalSubs       Int
+  spenders        Int
+  totalSpentCents Int
+  source          String   @default("theonlyapi")
+
+  creator Creator? @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+
+  @@index([creatorId, ts])
+  @@index([ofUserId, ts])
+}
+
+/// Panel-wide earnings for a named period, as the OnlyFans API reports them.
+/// Stored rather than fetched on render so a dashboard load never waits on a
+/// third-party API, and so the number survives that API being down.
+model OfEarningsSnapshot {
+  id                  String   @id @default(cuid())
+  /// "today" | "week" | "month"
+  period              String
+  ts                  DateTime @default(now())
+  totalCents          Int
+  prevTotalCents      Int
+  messagesCents       Int
+  subscriptionsCents  Int
+  tipsCents           Int
+  postsCents          Int
+  streamsCents        Int
+  referralsCents      Int
+  transactions        Int
+  accountsCount       Int
+  accountsNeverSynced Int
+  chartDays           String[] @default([])
+  chartCents          Int[]    @default([])
+
+  @@unique([period, ts])
+  @@index([period, ts])
+}
+
+// ---------------------------------------------------------------------------
+// OnlyFans tracking links ("campaigns")
+// ---------------------------------------------------------------------------
+
+/// One OnlyFans tracking link — what the panel calls a campaign and what a bio
+/// link points at (`onlyfans.com/<model>/c15` is campaignCode 15).
+///
+/// This is the only place OnlyFans tells us where a subscriber came from, so it
+/// is the whole basis for saying a click or a sub is *Reddit's*. OnlyFans
+/// reports clicks and subscribers per link but NOT earnings per link, which is
+/// why revenue has to be apportioned rather than read off (see
+/// `src/lib/queries/reddit-links.ts`).
+///
+/// The counters are lifetime cumulative, so a period figure is the difference
+/// between two snapshots — hence OfCampaignSnapshot.
+model OfCampaign {
+  id           String    @id @default(cuid())
+  ofUserId     String
+  ofUsername   String?
+  creatorId    String?
+  /// the number in the link: `/c15` -> 15
+  campaignCode Int
+  /// OnlyFans' own row id, kept for support conversations
+  ofCampaignId String?
+  name         String
+  /// classified from the link's name at sync time
+  isReddit     Boolean   @default(false)
+  /// set by hand in the CRM; overrides the name-based classification either way
+  redditOverride Boolean?
+  /// whether this link's numbers count towards the CRM's figures. Seeded from
+  /// the name classifier, then owned by the team — the dashboard should report
+  /// the links they say are theirs, not the ones a regex guessed at.
+  trackedInCrm   Boolean   @default(false)
+  /// the Reddit account this link belongs to, when the name names one
+  redditAccountId String?
+  clicks       Int       @default(0)
+  subs         Int       @default(0)
+  /// how many claimers the platform cache actually holds for this link — the
+  /// coverage behind every attributed figure, never hidden
+  claimersCached Int     @default(0)
+  ofCreatedAt  DateTime?
+  isDeleted    Boolean   @default(false)
+  firstSeenAt  DateTime  @default(now())
+  lastSyncedAt DateTime  @updatedAt
+
+  creator       Creator?             @relation(fields: [creatorId], references: [id], onDelete: SetNull)
+  redditAccount RedditAccount?       @relation(fields: [redditAccountId], references: [id], onDelete: SetNull)
+  snapshots     OfCampaignSnapshot[]
+  claims        OfFanClaim[]
+
+  @@unique([ofUserId, campaignCode])
+  @@index([isReddit])
+  @@index([redditAccountId])
+}
+
+/// A reading of a tracking link's lifetime counters. Two readings either side of
+/// a window give that window's clicks and subs.
+model OfCampaignSnapshot {
+  id         String   @id @default(cuid())
+  campaignId String
+  ts         DateTime @default(now())
+  clicks     Int
+  subs       Int
+
+  campaign OfCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@index([campaignId, ts])
+}
+
+/// One OnlyFans account's net earnings for one day, as the panel reports them.
+/// Stored per day so any range the dashboard asks for can be summed exactly,
+/// instead of being pinned to the API's own today/week/month vocabulary.
+model OfEarningsDay {
+  id           String   @id @default(cuid())
+  ofUserId     String
+  creatorId    String?
+  day          DateTime @db.Date
+  netCents     Int
+  transactions Int      @default(0)
+  syncedAt     DateTime @updatedAt
+
+  @@unique([ofUserId, day])
+  @@index([day])
+}
+
+/// A fan who subscribed through a particular tracking link — the row that makes
+/// revenue attribution a lookup rather than an estimate. A fan can claim more
+/// than one link over the years, so the claim carries its date and the most
+/// recent claim before a payment is the one credited.
+model OfFanClaim {
+  id         String    @id @default(cuid())
+  ofUserId   String
+  fanId      String
+  campaignId String
+  fanUsername String?
+  claimedAt  DateTime?
+  /// the subscribe date the platform reports on the claimer row itself. More
+  /// complete than the subscriber list, which drops fans once they churn.
+  subscribedAt DateTime?
+  syncedAt   DateTime  @updatedAt
+
+  campaign OfCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@unique([ofUserId, fanId, campaignId])
+  @@index([campaignId])
+  @@index([ofUserId, fanId])
+}
+
+/// One money movement on an OnlyFans account, with the fan who caused it.
+/// `netCents` is what the account keeps, and is what the panel's own earnings
+/// figures are built from.
+model OfTransaction {
+  id         String   @id @default(cuid())
+  ofUserId   String
+  txId       String
+  fanId      String?
+  ts         DateTime
+  grossCents Int
+  netCents   Int
+  kind       String?
+  syncedAt   DateTime @updatedAt
+
+  @@unique([ofUserId, txId])
+  @@index([ofUserId, ts])
+  @@index([fanId, ts])
+}
+
+/// One fan on one OnlyFans account, with the date they actually subscribed.
+///
+/// This exists because the claim rows on OfFanClaim carry the date the platform
+/// cache first SAW a fan, not the date the fan arrived — whole links land on a
+/// single backfill day. Splitting revenue into new and returning fans off that
+/// date would be measuring when we started looking, not when anybody showed up.
+model OfFan {
+  id              String    @id @default(cuid())
+  ofUserId        String
+  fanId           String
+  subscribedAt    DateTime?
+  expiredAt       DateTime?
+  totalSpentCents Int       @default(0)
+  syncedAt        DateTime  @updatedAt
+
+  @@unique([ofUserId, fanId])
+  @@index([ofUserId, subscribedAt])
+}
+
+/// A fan's arrival through a tracking link, as OnlyMonster recorded it at the
+/// time.
+///
+/// This is the authority on when a subscriber arrived. OnlyFans drops a fan from
+/// every endpoint once their account is deleted, so the platform cannot answer
+/// for anyone who has since left; OnlyMonster wrote them down while they were
+/// there. `linkId` is the OnlyFans campaign id, so it joins straight to
+/// OfCampaign.ofCampaignId with no matching logic.
+model OmLinkFan {
+  id           String    @id @default(cuid())
+  ofUserId     String
+  linkId       String
+  fanId        String
+  fanUsername  String?
+  subscribedAt DateTime?
+  collectedAt  DateTime?
+  syncedAt     DateTime  @updatedAt
+
+  @@unique([linkId, fanId])
+  @@index([ofUserId, subscribedAt])
+  @@index([fanId])
+}
+
+/// A bouncy.ai smart link, and the OnlyFans tracking link it points at.
+model BouncyLink {
+  id          String   @id @default(cuid())
+  linkId      String   @unique
+  slug        String
+  domain      String?
+  destination String
+  isActive    Boolean  @default(true)
+  /// resolved from the destination URL: onlyfans.com/<model>/c<code>
+  campaignId  String?
+  syncedAt    DateTime @updatedAt
+
+  clickDays BouncyClickDay[]
+
+  @@index([campaignId])
+}
+
+/// Clicks on a bouncy link for one day.
+///
+/// The only click data in this product that is genuinely per-period. OnlyFans
+/// and OnlyMonster both expose lifetime counters only, so their windowed
+/// figures have to be differenced from readings taken over time; bouncy logs
+/// each hit, so a window that has already passed can still be answered.
+model BouncyClickDay {
+  id          String   @id @default(cuid())
+  bouncyId    String
+  day         DateTime @db.Date
+  views       Int      @default(0)
+  /// the portion whose referrer was a Reddit site or app
+  redditViews Int      @default(0)
+  syncedAt    DateTime @updatedAt
+
+  link BouncyLink @relation(fields: [bouncyId], references: [id], onDelete: Cascade)
+
+  @@unique([bouncyId, day])
+  @@index([day])
+}
+
+/// A Reddit account we watch to learn where it posts.
+///
+/// Competitors, or simply accounts working the same niche. We never touch them;
+/// we read their public timelines to find out which subreddits accept this kind
+/// of content, which is how the subreddit list gets built without guessing.
+model ScrapeTarget {
+  id            String    @id @default(cuid())
+  username      String    @unique
+  note          String?
+  addedById     String?
+  active        Boolean   @default(true)
+  lastScrapedAt DateTime?
+  /// posts read on the last pass — zero usually means suspended or renamed
+  postsSeen     Int       @default(0)
+  lastError     String?
+  /// free-form labels on the account itself — niche, language, why we watch it.
+  /// A plain list rather than a table: a tag has no properties of its own, and
+  /// the moment it needs one it should become a real model instead.
+  tags          String[]  @default([])
+  /// Reddit's equivalent of a follower count. Kept with the reading before it
+  /// so the table can show movement rather than a standing total — a watched
+  /// account at 40k karma tells you nothing, +900 since yesterday tells you
+  /// they are working.
+  karma         Int       @default(0)
+  karmaPrev     Int       @default(0)
+  karmaCheckedAt DateTime?
+  createdAt     DateTime  @default(now())
+
+  observations SubredditObservation[]
+  posts        TargetPost[]
+
+
+  @@index([active])
+}
+
+/// One target's posting history in one subreddit.
+///
+/// Kept per target rather than as a single running total, so "how many
+/// different accounts post here" is a real count and re-reading a timeline
+/// cannot inflate it.
+model SubredditObservation {
+  id         String    @id @default(cuid())
+  targetId   String
+  subreddit  String
+  posts      Int       @default(0)
+  /// activity that is not a post. A comment is weaker evidence than a post, but
+  /// it is still evidence the account is welcome there — and on accounts whose
+  /// submission listing is truncated it is the only evidence there is.
+  comments   Int       @default(0)
+  totalScore Int       @default(0)
+  bestScore  Int       @default(0)
+  lastPostAt DateTime?
+  updatedAt  DateTime  @updatedAt
+
+  target ScrapeTarget @relation(fields: [targetId], references: [id], onDelete: Cascade)
+
+  @@unique([targetId, subreddit])
+  @@index([subreddit])
+}
+
+/// A subreddit found by watching targets, before anyone decides to use it.
+///
+/// Separate from Subreddit: this is a candidate list built from evidence, and
+/// promoting one into the real list is a decision someone makes, not something
+/// a scraper does on its own.
+/**
+ * A post made by someone we are watching — a competitor, or an account whose
+ * placement we want to copy.
+ *
+ * Individual posts rather than the per-subreddit totals `SubredditObservation`
+ * already keeps, because the useful questions are about rhythm and wording: how
+ * often do they post, at what hour, with what titles, and which of those landed.
+ * Reddit's own feed serves any public account's submissions, so this is
+ * obtainable for anyone without their cooperation.
+ */
+/**
+ * A saved collection of other people's POSTS — a swipe file.
+ *
+ * The reason to watch a competitor is not the account, it is the post that
+ * worked: the title, the subreddit it went to, the hour it went out. An album
+ * is where those get kept so they can be copied later, and it is separate from
+ * the tags on the account, which answer a different question ("who is this?"
+ * rather than "what worked?").
+ */
+model SpyAlbum {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  note        String?
+  /// the dot beside the tile, so an album is recognisable before it is read
+  color       String?
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  createdBy User?           @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  items     SpyAlbumPost[]
+}
+
+model SpyAlbumPost {
+  id       String   @id @default(cuid())
+  albumId  String
+  postId   String
+  /// why it was kept — the thing worth remembering about it
+  note     String?
+  addedAt  DateTime @default(now())
+
+  album SpyAlbum   @relation(fields: [albumId], references: [id], onDelete: Cascade)
+  post  TargetPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@unique([albumId, postId])
+  @@index([postId])
+}
+
+model TargetPost {
+  id            String   @id @default(cuid())
+  targetId      String
+  redditPostId  String   @unique
+  subreddit     String
+  title         String
+  url           String?
+  postedAt      DateTime
+  score         Int      @default(0)
+  comments      Int      @default(0)
+  /// Reddit's own preview image, straight off the feed. A swipe file of titles
+  /// with no pictures is half a swipe file — the thumbnail is most of what
+  /// makes a post worth copying.
+  thumbnailUrl  String?
+  /// where the post actually points: redgifs, imgur, an image host
+  mediaUrl      String?
+  firstSeenAt   DateTime @default(now())
+  lastMetricAt  DateTime?
+
+  target ScrapeTarget @relation(fields: [targetId], references: [id], onDelete: Cascade)
+  albums SpyAlbumPost[]
+
+  @@index([targetId, postedAt])
+  @@index([subreddit])
+}
+
+model DiscoveredSubreddit {
+  id          String    @id @default(cuid())
+  name        String    @unique
+  subscribers Int?
+  over18      Boolean   @default(false)
+  /// posts seen across every target, and how many distinct targets post here
+  posts       Int       @default(0)
+  comments    Int       @default(0)
+  targets     Int       @default(0)
+  avgScore    Int       @default(0)
+  bestScore   Int       @default(0)
+  lastPostAt  DateTime?
+  firstSeenAt DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  /// set once it has been promoted into the working subreddit list
+  promoted    Boolean   @default(false)
+  /// set by hand when it is not worth using, so it stops resurfacing
+  dismissed   Boolean   @default(false)
+  /// Reddit will not serve this subreddit — banned, gone private, or never
+  /// existed. Distinct from `dismissed`, which is a judgement we made, and from
+  /// a blank row, which means nobody has looked yet. The enricher used to
+  /// record these as "checked: SFW, no rules, no requirements", which reads as
+  /// a wide-open subreddit and is the exact opposite of the truth.
+  unavailable Boolean   @default(false)
+
+  // ---- what the subreddit demands of a poster ----------------------------
+  // Read from the subreddit's own rules. Every one is nullable and null means
+  // NOT STATED, never "no": a rule the mods did not write down is a rule we
+  // have not read, and treating silence as permission is how accounts get
+  // banned. A human can check any of them against `rulesJson`.
+  /// comment+post karma the rules ask for, when they name a number
+  minKarma             Int?
+  /// account age in days, when the rules name one
+  minAccountAgeDays    Int?
+  /// the sub runs a verification process before you may post
+  requiresVerification Boolean?
+  /// reposts and stolen content are banned — you must shoot your own
+  originalContentOnly  Boolean?
+  /// title baiting and vote begging are called out in the rules
+  bansAskingForUpvotes Boolean?
+  /// "any" | "link" | "self" — r/traps is "link", so a text post cannot be made
+  /// there at all. Never populated until 2026-08-25 despite existing.
+  submissionType       String?
+
+  // ---- what the subreddit will physically accept -------------------------
+  // All of it rides along in the same getSubredditInfo request the rules read
+  // already makes, so it costs nothing extra. Unlike the rule flags these are
+  // Reddit's own switches rather than someone's prose, so false really is
+  // false — but they stay nullable so "never read" is still distinguishable.
+  /// direct image uploads permitted
+  allowsImages         Boolean?
+  /// video uploads permitted — r/traps says no, which decides the whole shoot
+  allowsVideos         Boolean?
+  /// multi-image galleries permitted
+  allowsGalleries      Boolean?
+  /// Reddit's `restrict_posting`. Stored but NOT displayed: it reads true for
+  /// every subreddit tested including r/parrots and r/AskReddit — 169 of 169
+  /// here — so it separates nothing. Do not build a filter on it.
+  restrictedPosting    Boolean?
+  /// "public" | "restricted" | "private" | "user"
+  subredditType        String?
+  /// quarantined subs are hidden from search and need an opt-in click
+  quarantined          Boolean?
+  /// when the subreddit itself was created
+  subCreatedAt         DateTime?
+  /// the "read this before posting" box — often the real rules
+  submitText           String?
+  description          String?
+  // ---- how busy the place is ---------------------------------------------
+  // Subscribers say how many people COULD see a post; these say how long it
+  // stays visible. r/FemboySeduction takes 183 posts a day and r/VenusTrans 40,
+  // so the same post is buried in two hours in one and still on the front page
+  // the next morning in the other. Reddit publishes no visitor count, and this
+  // is the closest honest substitute.
+  /// submissions per day, measured from the subreddit's own feed
+  postsPerDay          Float?
+  /// median score of those submissions — what a normal post gets here
+  medianScore          Int?
+  /// best score seen in the sampled window
+  topScore             Int?
+  trafficCheckedAt     DateTime?
+
+  /// every rule as the API returned it, so a judgement can be checked
+  rulesJson            Json?
+  ruleCount            Int?
+  rulesCheckedAt       DateTime?
+
+  nicheItems SubredditNicheItem[]
+
+  @@index([promoted, dismissed])
+  @@index([targets])
+}
+
+/// A niche — the audience a subreddit serves, which is what decides whether a
+/// model belongs in it. The team builds these out of what the scraper finds, so
+/// "where do we post Lali today" has an answer that is not somebody's memory.
+model SubredditNiche {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  note        String?
+  /// the dot beside the tile, so a niche is recognisable before it is read
+  color       String?
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  createdBy User?                @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  items     SubredditNicheItem[]
+}
+
+model SubredditNicheItem {
+  id        String   @id @default(cuid())
+  nicheId   String
+  /// the name is the key, so a subreddit can be filed before it is discovered
+  subreddit String
+  note      String?
+  addedAt   DateTime @default(now())
+
+  niche      SubredditNiche       @relation(fields: [nicheId], references: [id], onDelete: Cascade)
+  discovered DiscoveredSubreddit? @relation(fields: [subreddit], references: [name], onDelete: SetNull)
+
+  @@unique([nicheId, subreddit])
+  @@index([subreddit])
+}

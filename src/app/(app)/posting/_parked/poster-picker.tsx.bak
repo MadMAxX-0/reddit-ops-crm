@@ -1,0 +1,36 @@
+'use client'
+
+import { useFilterNav } from '@/components/filters/use-filter-nav'
+import { cn } from '@/lib/utils'
+
+export function PosterPicker({
+  posters,
+  value,
+  className,
+}: {
+  posters: { id: string; name: string }[]
+  value: string
+  className?: string
+}) {
+  const { set } = useFilterNav()
+  return (
+    <div className={cn('flex flex-wrap items-center gap-1.5', className)}>
+      <span className="label-xs mr-1">Viewing</span>
+      {posters.map((p) => (
+        <button
+          key={p.id}
+          type="button"
+          onClick={() => set({ va: p.id })}
+          className={cn(
+            'text-14 border-hairline h-7 rounded-[6px] border px-2.5 transition-colors',
+            p.id === value
+              ? 'bg-accent-soft border-accent/40 text-accent font-medium'
+              : 'bg-surface-2 text-fg-secondary hover:text-fg',
+          )}
+        >
+          {p.name}
+        </button>
+      ))}
+    </div>
+  )
+}

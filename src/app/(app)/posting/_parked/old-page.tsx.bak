@@ -1,0 +1,112 @@
+import { redirect } from 'next/navigation'
+import { prisma } from '@/lib/prisma'
+import { requireCtx } from '@/lib/session'
+import { todaysPlan } from '@/lib/queries/posting'
+import { dayBounds, todayKey } from '@/lib/time'
+import { Card } from '@/components/ui/card'
+import { EmptyState } from '@/components/ui/empty-state'
+import { StatRow } from '@/components/ui/stat-row'
+import { GoalBar } from '@/components/ui/goal-bar'
+import { PosterPicker } from './poster-picker'
+import { PlanList } from './plan-list'
+
+export const metadata = { title: 'Posting · Reddit Ops CRM' }
+
+function one(v: string | string[] | undefined) {
+  return Array.isArray(v) ? v[0] : v
+}
+
+export default async function PostingPage(props: PageProps<'/posting'>) {
+  const sp = await props.searchParams
+  const ctx = await requireCtx()
+  const boundaryTz = ctx.workspace.dayBoundaryTimezone
+  const key = todayKey(boundaryTz)
+  const { start, end } = dayBounds(key, boundaryTz)
+
+  // managers browse a poster's plan; a poster only ever sees their own
+  const posters = ctx.isManager
+    ? await prisma.user.findMany({
+        where: { role: 'POSTER', status: 'ACTIVE' },
+        orderBy: { name: 'asc' },
+        select: { id: true, name: true, dailyPostGoal: true },
+      })
+    : []
+
+  const requested = one(sp.va)
+  const posterId = ctx.isManager ? (requested ?? posters[0]?.id) : ctx.user.id
+  if (ctx.user.role === 'FARMER') redirect('/dashboard')
+  if (!posterId) {
+    return (
+      <Card>
+        <EmptyState title="No active posters." hint="Add one in Admin → Users." />
+      </Card>
+    )
+  }
+
+  const poster = ctx.isManager
+    ? posters.find((p) => p.id === posterId)
+    : { id: ctx.user.id, name: ctx.user.name, dailyPostGoal: ctx.user.dailyPostGoal }
+
+  const plan = (await todaysPlan(ctx, posterId, start, end)).sort((a, b) => {
+    // the work list first: an account with an opening that has not posted today
+    const actionable = (x: typeof a) => (x.eligible.length > 0 && x.postsToday === 0 ? 0 : 1)
+    return (
+      actionable(a) - actionable(b) ||
+      (b.eligible[0]?.score ?? 0) - (a.eligible[0]?.score ?? 0) ||
+      b.healthScore - a.healthScore
+    )
+  })
+
+  const postsToday = plan.reduce((s, a) => s + a.postsToday, 0)
+  const readyNow = plan.filter((a) => a.eligible.length > 0).length
+  const openSlots = plan.reduce((s, a) => s + a.eligible.length, 0)
+  const coolingSlots = plan.reduce(
+    (s, a) => s + a.blocked.filter((b) => b.reason === 'COOLDOWN').length,
+    0,
+  )
+
+  return (
+    <>
+      {ctx.isManager && posters.length > 0 && (
+        <PosterPicker posters={posters} value={posterId} className="mb-3" />
+      )}
+
+      <StatRow
+        className="mb-4"
+        stats={[
+          {
+            label: 'Posts today',
+            value: postsToday,
+            sub: 'discovered, not self-reported',
+            tone: 'accent',
+          },
+          {
+            label: 'Daily goal',
+            value: <GoalBar current={postsToday} target={poster?.dailyPostGoal ?? 0} width={84} />,
+            sub:
+              (poster?.dailyPostGoal ?? 0) > postsToday
+                ? `${(poster?.dailyPostGoal ?? 0) - postsToday} to go`
+                : 'goal met',
+          },
+          {
+            label: 'Accounts ready',
+            value: `${plan.filter((a) => a.eligible.length > 0 && a.postsToday === 0).length}/${plan.length}`,
+            sub: `${readyNow} have an opening · ${openSlots} pairs open`,
+          },
+          { label: 'On cooldown', value: coolingSlots, sub: 'pairs waiting out a cooldown' },
+        ]}
+      />
+
+      {plan.length === 0 ? (
+        <Card>
+          <EmptyState
+            title="No accounts assigned."
+            hint="A manager assigns accounts from the Account database."
+          />
+        </Card>
+      ) : (
+        <PlanList accounts={plan} displayTz={ctx.user.timezone} />
+      )}
+    </>
+  )
+}

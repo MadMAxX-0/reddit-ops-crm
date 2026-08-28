@@ -1,0 +1,422 @@
+'use client'
+
+import * as React from 'react'
+import { useRouter, usePathname, useSearchParams } from 'next/navigation'
+import type { ColumnDef } from '@tanstack/react-table'
+import { Download, Loader2, ShieldOff, UserCog, Archive } from 'lucide-react'
+import { DataTable } from '@/components/ui/data-table'
+import { StatusDot } from '@/components/ui/status-dot'
+import { TwoLineCell } from '@/components/ui/two-line-cell'
+import { Pagination } from '@/components/ui/pagination'
+import { Button } from '@/components/ui/button'
+import { Card } from '@/components/ui/card'
+import { fmtCompact, fmtNum, fmtPct } from '@/lib/format'
+import { fmtRelative } from '@/lib/time'
+import {
+  ACCOUNT_STATUS_LABEL,
+  ACCOUNT_STATUS_TONE,
+  type AccountRowDTO,
+} from '@/lib/display/account'
+import { markSuspended, reassignAccounts, retireAccounts } from './actions'
+import { cn } from '@/lib/utils'
+
+export function AccountsTable({
+  rows,
+  total,
+  page,
+  pageCount,
+  pageSize,
+  displayTz,
+  canMutate,
+  creators,
+  posters,
+}: {
+  rows: AccountRowDTO[]
+  total: number
+  page: number
+  pageCount: number
+  pageSize: number
+  sort: string
+  dir: 'asc' | 'desc'
+  displayTz: string
+  canMutate: boolean
+  creators: { id: string; name: string }[]
+  posters: { id: string; name: string }[]
+}) {
+  const router = useRouter()
+  const pathname = usePathname()
+  const params = useSearchParams()
+  const [selected, setSelected] = React.useState<Set<string>>(new Set())
+  const [busy, setBusy] = React.useState(false)
+  const [note, setNote] = React.useState<string | null>(null)
+
+  // Adjust during render rather than in an effect: an effect would paint one
+  // frame with the old selection against the new page.
+  const [renderedRows, setRenderedRows] = React.useState(rows)
+  if (rows !== renderedRows) {
+    setRenderedRows(rows)
+    setSelected(new Set())
+  }
+
+  function openAccount(id: string) {
+    const sp = new URLSearchParams(params)
+    sp.set('account', id)
+    router.replace(`${pathname}?${sp.toString()}`, { scroll: false })
+  }
+
+  function toggle(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const allOnPage = rows.length > 0 && rows.every((r) => selected.has(r.id))
+
+  async function run(
+    fn: () => Promise<{ ok: boolean; count?: number; error?: string }>,
+    verb: string,
+  ) {
+    setBusy(true)
+    setNote(null)
+    const res = await fn()
+    setBusy(false)
+    setNote(
+      res.ok
+        ? `${verb} ${res.count} account${res.count === 1 ? '' : 's'}.`
+        : (res.error ?? 'Failed.'),
+    )
+    if (res.ok) {
+      setSelected(new Set())
+      router.refresh()
+    }
+  }
+
+  const columns = React.useMemo<ColumnDef<AccountRowDTO, unknown>[]>(
+    () => [
+      {
+        id: 'select',
+        size: 210,
+        header: () => (
+          <span className="flex items-center gap-2">
+            {canMutate && (
+              <input
+                type="checkbox"
+                checked={allOnPage}
+                onChange={() => setSelected(allOnPage ? new Set() : new Set(rows.map((r) => r.id)))}
+                className="accent-accent h-3 w-3"
+                aria-label="Select all on page"
+              />
+            )}
+            Username
+          </span>
+        ),
+        accessorKey: 'username',
+        cell: ({ row }) => (
+          <span className="flex items-center gap-2">
+            {canMutate && (
+              <input
+                type="checkbox"
+                checked={selected.has(row.original.id)}
+                onChange={() => toggle(row.original.id)}
+                onClick={(e) => e.stopPropagation()}
+                className="accent-accent h-3 w-3"
+                aria-label={`Select ${row.original.username}`}
+              />
+            )}
+            <span className="mono text-14 text-fg truncate">u/{row.original.username}</span>
+          </span>
+        ),
+      },
+      {
+        header: 'Status',
+        accessorKey: 'status',
+        size: 130,
+        cell: ({ row }) => (
+          <StatusDot
+            tone={ACCOUNT_STATUS_TONE[row.original.status] ?? 'muted'}
+            label={ACCOUNT_STATUS_LABEL[row.original.status] ?? row.original.status}
+          />
+        ),
+      },
+      {
+        header: 'Health',
+        accessorKey: 'healthScore',
+        size: 92,
+        meta: { align: 'right' },
+        cell: ({ row }) => (
+          <TwoLineCell
+            align="right"
+            value={row.original.healthScore}
+            tone={
+              row.original.healthScore >= 70
+                ? 'default'
+                : row.original.healthScore >= 40
+                  ? 'warning'
+                  : 'negative'
+            }
+            sub={row.original.shadowbanned ? 'shadowbanned' : row.original.pollTier.toLowerCase()}
+          />
+        ),
+      },
+      {
+        header: 'Age',
+        accessorKey: 'ageDays',
+        size: 74,
+        meta: { align: 'right' },
+        cell: ({ row }) => <span className="mono">{row.original.ageDays}d</span>,
+      },
+      {
+        header: 'Post karma',
+        accessorKey: 'karmaPost',
+        size: 96,
+        meta: { align: 'right' },
+        cell: ({ row }) => <span className="mono">{fmtCompact(row.original.karmaPost)}</span>,
+      },
+      {
+        header: 'Comment karma',
+        accessorKey: 'karmaComment',
+        size: 112,
+        meta: { align: 'right' },
+        cell: ({ row }) => <span className="mono">{fmtCompact(row.original.karmaComment)}</span>,
+      },
+      {
+        header: 'Verified subs',
+        accessorKey: 'verifiedCount',
+        size: 150,
+        cell: ({ row }) =>
+          row.original.verifiedCount === 0 ? (
+            <span className="text-fg-muted text-14">—</span>
+          ) : (
+            <TwoLineCell
+              value={row.original.verifiedCount}
+              sub={row.original.verifiedSubreddits
+                .slice(0, 2)
+                .map((s) => `r/${s}`)
+                .join(' · ')}
+            />
+          ),
+      },
+      {
+        header: 'Creator',
+        accessorKey: 'creatorName',
+        size: 130,
+        cell: ({ row }) => (
+          <span className="block truncate whitespace-nowrap">
+            {row.original.creatorName ?? <span className="text-fg-muted">Unassigned</span>}
+          </span>
+        ),
+      },
+      {
+        header: 'Poster',
+        accessorKey: 'posterName',
+        size: 130,
+        cell: ({ row }) => (
+          <span className="block truncate whitespace-nowrap">
+            {row.original.posterName ?? <span className="text-fg-muted">—</span>}
+          </span>
+        ),
+      },
+      {
+        header: 'Created by',
+        accessorKey: 'createdByName',
+        size: 130,
+        cell: ({ row }) => (
+          <span className="block truncate whitespace-nowrap">
+            {row.original.createdByName ?? <span className="text-fg-muted">Imported</span>}
+          </span>
+        ),
+      },
+      {
+        header: 'Proxy',
+        accessorKey: 'proxyLabel',
+        size: 96,
+        cell: ({ row }) => (
+          <span className="mono text-fg-secondary">{row.original.proxyLabel ?? '—'}</span>
+        ),
+      },
+      {
+        header: 'Last checked',
+        accessorKey: 'lastCheckedAt',
+        size: 110,
+        meta: { align: 'right' },
+        cell: ({ row }) => (
+          <span className="mono text-fg-secondary" title={row.original.lastCheckedAt?.toString()}>
+            {fmtRelative(row.original.lastCheckedAt)}
+          </span>
+        ),
+      },
+      {
+        // Lifetime leads, the window is the sub-line. The other way round read
+        // zero on almost every row, because this operation's recorded posts are
+        // mostly older than 30 days.
+        header: 'Posts',
+        accessorKey: 'postsTotal',
+        size: 110,
+        meta: { align: 'right' },
+        cell: ({ row }) => (
+          <TwoLineCell
+            align="right"
+            value={fmtNum(row.original.postsTotal)}
+            sub={
+              row.original.suspectedMissedPosts
+                ? `${row.original.suspectedMissedPosts} suspected missed`
+                : `${fmtNum(row.original.posts30d)} in 30d`
+            }
+            tone={row.original.suspectedMissedPosts ? 'warning' : 'default'}
+          />
+        ),
+      },
+      {
+        header: 'Removal rate',
+        accessorKey: 'removalRate',
+        size: 110,
+        meta: { align: 'right' },
+        cell: ({ row }) =>
+          row.original.removalRate == null ? (
+            <span className="text-fg-muted">—</span>
+          ) : (
+            <TwoLineCell
+              align="right"
+              value={fmtPct(row.original.removalRate, 0)}
+              sub={`${row.original.removed30d}/${row.original.posts30d}`}
+              tone={row.original.removalRate > 0.25 ? 'negative' : 'default'}
+            />
+          ),
+      },
+    ],
+    [rows, selected, allOnPage, canMutate, displayTz],
+  )
+
+  const exportHref = `/api/accounts/export?${params.toString()}`
+
+  return (
+    <div className="space-y-3">
+      {canMutate && selected.size > 0 && (
+        <BulkBar
+          count={selected.size}
+          busy={busy}
+          creators={creators}
+          posters={posters}
+          onReassign={(creatorId, posterId) =>
+            run(
+              () => reassignAccounts({ accountIds: [...selected], creatorId, posterId }),
+              'Reassigned',
+            )
+          }
+          onRetire={() => run(() => retireAccounts([...selected]), 'Retired')}
+          onSuspend={() => run(() => markSuspended([...selected]), 'Marked suspended on')}
+          onClear={() => setSelected(new Set())}
+        />
+      )}
+      {note && <p className="text-14 text-fg-secondary">{note}</p>}
+
+      <DataTable
+        columns={columns}
+        data={rows}
+        rowKey={(r) => r.id}
+        onRowClick={(r) => openAccount(r.id)}
+        maxHeight={640}
+        rowHeight={48}
+        emptyTitle="No accounts match these filters."
+        emptyHint="Loosen a filter, or clear the search."
+        footer={
+          <div className="flex items-center justify-between gap-3">
+            <a
+              href={exportHref}
+              className="text-13 text-fg-secondary hover:text-fg inline-flex items-center gap-1.5"
+            >
+              <Download className="h-3 w-3" /> Export CSV
+            </a>
+            <Pagination
+              page={page}
+              pageCount={pageCount}
+              total={total}
+              pageSize={pageSize}
+              noun="accounts"
+            />
+          </div>
+        }
+      />
+    </div>
+  )
+}
+
+function BulkBar({
+  count,
+  busy,
+  creators,
+  posters,
+  onReassign,
+  onRetire,
+  onSuspend,
+  onClear,
+}: {
+  count: number
+  busy: boolean
+  creators: { id: string; name: string }[]
+  posters: { id: string; name: string }[]
+  onReassign: (creatorId: string, posterId: string) => void
+  onRetire: () => void
+  onSuspend: () => void
+  onClear: () => void
+}) {
+  const [creatorId, setCreatorId] = React.useState(creators[0]?.id ?? '')
+  const [posterId, setPosterId] = React.useState(posters[0]?.id ?? '')
+
+  const selectCls =
+    'bg-surface-2 border-hairline text-14 text-fg h-7 rounded-[5px] border px-2 outline-none'
+
+  return (
+    <Card className="flex flex-wrap items-center gap-2 px-3 py-2">
+      <span className="mono text-14 text-accent">{count} selected</span>
+      <span className="bg-hairline mx-1 h-4 w-px" />
+
+      <UserCog className="text-fg-muted h-3.5 w-3.5" />
+      <select
+        value={creatorId}
+        onChange={(e) => setCreatorId(e.target.value)}
+        className={selectCls}
+      >
+        {creators.map((c) => (
+          <option key={c.id} value={c.id}>
+            {c.name}
+          </option>
+        ))}
+      </select>
+      <select value={posterId} onChange={(e) => setPosterId(e.target.value)} className={selectCls}>
+        {posters.map((p) => (
+          <option key={p.id} value={p.id}>
+            {p.name}
+          </option>
+        ))}
+      </select>
+      <Button
+        size="sm"
+        variant="primary"
+        disabled={busy || !creatorId || !posterId}
+        onClick={() => onReassign(creatorId, posterId)}
+      >
+        {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Reassign'}
+      </Button>
+
+      <span className="bg-hairline mx-1 h-4 w-px" />
+      <Button size="sm" variant="secondary" disabled={busy} onClick={onRetire}>
+        <Archive className="h-3 w-3" /> Retire
+      </Button>
+      <Button size="sm" variant="danger" disabled={busy} onClick={onSuspend}>
+        <ShieldOff className="h-3 w-3" /> Mark suspended
+      </Button>
+
+      <button
+        type="button"
+        onClick={onClear}
+        className={cn('text-13 text-fg-muted hover:text-fg ml-auto')}
+      >
+        Clear selection
+      </button>
+    </Card>
+  )
+}

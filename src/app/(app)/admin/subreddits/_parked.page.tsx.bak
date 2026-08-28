@@ -1,0 +1,68 @@
+import { requireManager } from '@/lib/session'
+import { listSubreddits } from '@/lib/queries/subreddits'
+import { parseFilters } from '@/lib/filters'
+import { PageHeader } from '@/components/shell/page-header'
+import { RangeFilter } from '@/components/filters/range-filter'
+import { SearchFilter } from '@/components/filters/search-filter'
+import { SelectFilter } from '@/components/filters/multi-select'
+import { SubredditTable } from './subreddit-table'
+
+export const metadata = { title: 'Subreddit lists · Reddit Ops CRM' }
+
+function one(v: string | string[] | undefined) {
+  return Array.isArray(v) ? v[0] : v
+}
+
+export default async function SubredditsPage(props: PageProps<'/admin/subreddits'>) {
+  const sp = await props.searchParams
+  const ctx = await requireManager()
+  const filters = parseFilters(sp, ctx.workspace.dayBoundaryTimezone, { range: '30d' })
+
+  const tierFilter = one(sp.tier)
+  const statusFilter = one(sp.sstatus)
+
+  const all = await listSubreddits(filters.range, ctx.workspace.attributionWindowH)
+  const rows = all.filter((s) => {
+    if (filters.q && !s.name.toLowerCase().includes(filters.q.toLowerCase())) return false
+    if (tierFilter && s.tier !== tierFilter) return false
+    if (statusFilter && s.status !== statusFilter) return false
+    return true
+  })
+
+  return (
+    <>
+      <PageHeader
+        title="Subreddit lists"
+        context={`The playbook · performance from our own posts, ${filters.range.label.toLowerCase()}`}
+        filters={
+          <>
+            <SearchFilter value={filters.q} placeholder="Subreddit name…" />
+            <SelectFilter
+              paramKey="tier"
+              label="Tier"
+              value={tierFilter}
+              options={[
+                { value: 'S', label: 'S' },
+                { value: 'A', label: 'A' },
+                { value: 'B', label: 'B' },
+                { value: 'C', label: 'C' },
+              ]}
+            />
+            <SelectFilter
+              paramKey="sstatus"
+              label="Status"
+              value={statusFilter}
+              options={[
+                { value: 'ACTIVE', label: 'Active' },
+                { value: 'RISKY', label: 'Risky' },
+                { value: 'BANNED_FOR_US', label: 'Banned for us' },
+              ]}
+            />
+            <RangeFilter value={filters.range.preset} from={one(sp.from)} to={one(sp.to)} />
+          </>
+        }
+      />
+      <SubredditTable rows={rows} displayTz={ctx.user.timezone} />
+    </>
+  )
+}

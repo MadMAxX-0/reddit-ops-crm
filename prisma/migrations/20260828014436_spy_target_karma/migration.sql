@@ -1,0 +1,4 @@
+-- AlterTable
+ALTER TABLE "ScrapeTarget" ADD COLUMN     "karma" INTEGER NOT NULL DEFAULT 0,
+ADD COLUMN     "karmaCheckedAt" TIMESTAMP(3),
+ADD COLUMN     "karmaPrev" INTEGER NOT NULL DEFAULT 0;

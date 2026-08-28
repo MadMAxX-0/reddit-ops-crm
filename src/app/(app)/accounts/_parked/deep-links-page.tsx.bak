@@ -1,0 +1,44 @@
+import { requireCtx } from '@/lib/session'
+import { listOfLinks } from '@/lib/queries/of-links'
+import { resolveRange, type RangePreset } from '@/lib/time'
+import { PageHeader } from '@/components/shell/page-header'
+import { LinksTable } from './links-table'
+
+export const metadata = { title: 'Deep links · Reddit Ops CRM' }
+
+function one(v: string | string[] | undefined) {
+  return Array.isArray(v) ? v[0] : v
+}
+
+const PRESETS: RangePreset[] = ['24h', '7d', '30d']
+
+/**
+ * The Reddit tracking links, and which of them the CRM counts.
+ *
+ * Deliberately not the whole catalogue: the panel holds hundreds of Instagram,
+ * Twitter and shoutout links that have nothing to do with this team's work, and
+ * listing them buries the handful that matter. Links the classifier did not
+ * read as Reddit stay off this screen until there is a reason to bring them on.
+ */
+export default async function DeepLinksPage(props: PageProps<'/deep-links'>) {
+  const sp = await props.searchParams
+  const ctx = await requireCtx()
+
+  const rawRange = one(sp.range)
+  const preset = (PRESETS.includes(rawRange as RangePreset) ? rawRange : '30d') as RangePreset
+  const range = resolveRange(preset, ctx.workspace.dayBoundaryTimezone)
+
+  const all = await listOfLinks(range.start, range.end)
+  // an un-ticked link stays listed, or it could never be ticked back on
+  const rows = all.filter((l) => l.classifiedReddit || l.trackedInCrm)
+
+  return (
+    <div className="space-y-4">
+      <PageHeader
+        title="Deep links"
+        context="Reddit tracking links — ticked links are the ones the CRM counts"
+      />
+      <LinksTable rows={rows} rangeLabel={range.label} canEdit={ctx.isManager} />
+    </div>
+  )
+}

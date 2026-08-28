@@ -1,0 +1,222 @@
+import { prisma } from '@/lib/prisma'
+import { requireCtx } from '@/lib/session'
+import { listAccounts } from '@/lib/queries/accounts'
+import { getAccountDetail } from '@/lib/queries/account-detail'
+import { todayKey, dayContextLine } from '@/lib/time'
+import { PageHeader } from '@/components/shell/page-header'
+import { TabRow } from '@/components/shell/page-header'
+import { TabLink } from '@/components/shell/tab-link'
+import { MultiSelectFilter, SelectFilter } from '@/components/filters/multi-select'
+import { SearchFilter } from '@/components/filters/search-filter'
+import { activeRoster } from '@/lib/queries/active-roster'
+import { Roster } from './roster'
+import { AccountsTable } from './accounts-table'
+import { AccountDrawer } from './account-drawer'
+
+export const metadata = { title: 'Accounts · Reddit Ops CRM' }
+
+function list(v: string | string[] | undefined): string[] {
+  if (!v) return []
+  return (Array.isArray(v) ? v : [v]).flatMap((s) => s.split(',')).filter(Boolean)
+}
+function one(v: string | string[] | undefined) {
+  return Array.isArray(v) ? v[0] : v
+}
+
+export default async function AccountsPage(props: PageProps<'/accounts'>) {
+  const sp = await props.searchParams
+  const ctx = await requireCtx()
+
+  // The roster is the default view. "Full account database" answers what we
+  // own; the question a manager opens this page to ask is what is working and
+  // who is working it, so that leads and the full list is one tab away.
+  const view = one(sp.view) === 'all' ? 'all' : 'rotation'
+  if (view === 'rotation') {
+    const { groups, totals } = await activeRoster()
+    return (
+      <>
+        <PageHeader
+          title="Accounts"
+          context={`${dayContextLine(todayKey(ctx.workspace.dayBoundaryTimezone), ctx.workspace.dayBoundaryTimezone, ctx.user.timezone)} · accounts in rotation, grouped by the VA who works them`}
+          tabs={
+            <TabRow>
+              <TabLink href="/accounts">In rotation</TabLink>
+              <TabLink href="/accounts?view=all">Full database</TabLink>
+              <TabLink href="/pipeline">Pipeline</TabLink>
+            </TabRow>
+          }
+        />
+        <Roster
+          totals={totals}
+          groups={groups.map((g) => ({
+            ...g,
+            accounts: g.accounts.map((a) => ({
+              ...a,
+              // Dates cannot cross into a client component as Date objects
+              lastPostAt: a.lastPostAt ? a.lastPostAt.toISOString() : null,
+            })),
+          }))}
+        />
+      </>
+    )
+  }
+
+  const query = {
+    status: list(sp.status),
+    health: one(sp.health),
+    karma: one(sp.karma),
+    verified: one(sp.verified),
+    assigned: one(sp.assigned),
+    creatorIds: list(sp.creator),
+    posterIds: list(sp.poster),
+    farmerIds: list(sp.farmer),
+    q: one(sp.q)?.trim() ?? '',
+    page: Math.max(1, Number(one(sp.page) ?? 1) || 1),
+    pageSize: Math.min(200, Math.max(25, Number(one(sp.size) ?? 50) || 50)),
+    sort: one(sp.sort) ?? 'healthScore',
+    dir: one(sp.dir) === 'asc' ? ('asc' as const) : ('desc' as const),
+  }
+
+  const openAccountId = one(sp.account)
+
+  const [{ data, total, pageCount }, creators, staff, detail] = await Promise.all([
+    listAccounts(ctx, query),
+    prisma.creator.findMany({
+      where: { status: { not: 'CHURNED' } },
+      orderBy: { stageName: 'asc' },
+      select: { id: true, stageName: true, niche: true },
+    }),
+    prisma.user.findMany({
+      where: { status: 'ACTIVE', role: { in: ['POSTER', 'FARMER'] } },
+      orderBy: { name: 'asc' },
+      select: { id: true, name: true, role: true },
+    }),
+    openAccountId ? getAccountDetail(ctx, openAccountId) : Promise.resolve(null),
+  ])
+
+  const posters = staff.filter((s) => s.role === 'POSTER')
+  const farmers = staff.filter((s) => s.role === 'FARMER')
+
+  const scopeNote = ctx.isManager
+    ? 'all accounts'
+    : ctx.user.role === 'POSTER'
+      ? 'accounts assigned to you · read-only'
+      : 'accounts you created'
+
+  return (
+    <>
+      <PageHeader
+        title="Account database"
+        context={`${dayContextLine(todayKey(ctx.workspace.dayBoundaryTimezone), ctx.workspace.dayBoundaryTimezone, ctx.user.timezone)} · ${scopeNote}`}
+        tabs={
+          <TabRow>
+            <TabLink href="/accounts">In rotation</TabLink>
+            <TabLink href="/accounts?view=all">Full database</TabLink>
+            <TabLink href="/pipeline">Pipeline</TabLink>
+          </TabRow>
+        }
+        filters={
+          <>
+            <SearchFilter value={query.q} placeholder="Username, email, notes…" />
+            <SelectFilter
+              paramKey="status"
+              label="Status"
+              value={query.status[0]}
+              options={[
+                { value: 'ACTIVE', label: 'Active' },
+                { value: 'READY', label: 'Ready' },
+                { value: 'WARMING', label: 'Warming' },
+                { value: 'SHADOWBANNED', label: 'Shadowbanned' },
+                { value: 'SUSPENDED', label: 'Suspended' },
+                { value: 'RETIRED', label: 'Retired' },
+              ]}
+            />
+            <SelectFilter
+              paramKey="health"
+              label="Health"
+              value={query.health}
+              options={[
+                { value: 'high', label: 'High — 70+' },
+                { value: 'mid', label: 'Mid — 40–69' },
+                { value: 'low', label: 'Low — under 40' },
+              ]}
+            />
+            <SelectFilter
+              paramKey="karma"
+              label="Karma"
+              value={query.karma}
+              options={[
+                { value: 'k0', label: 'Under 100' },
+                { value: 'k100', label: '100 – 1k' },
+                { value: 'k1k', label: '1k – 10k' },
+                { value: 'k10k', label: '10k+' },
+              ]}
+            />
+            <SelectFilter
+              paramKey="verified"
+              label="Verified"
+              value={query.verified}
+              options={[
+                { value: 'yes', label: 'Has verifications' },
+                { value: 'no', label: 'None' },
+              ]}
+            />
+            <SelectFilter
+              paramKey="assigned"
+              label="Assignment"
+              value={query.assigned}
+              options={[
+                { value: 'assigned', label: 'Assigned' },
+                { value: 'unassigned', label: 'Unassigned' },
+              ]}
+            />
+            <MultiSelectFilter
+              paramKey="creator"
+              label="Creator"
+              selected={query.creatorIds}
+              options={creators.map((c) => ({
+                value: c.id,
+                label: c.stageName,
+                sub: c.niche ?? undefined,
+              }))}
+            />
+            {ctx.isManager && (
+              <MultiSelectFilter
+                paramKey="poster"
+                label="Poster"
+                selected={query.posterIds}
+                options={posters.map((p) => ({ value: p.id, label: p.name }))}
+              />
+            )}
+            {ctx.isManager && (
+              <MultiSelectFilter
+                paramKey="farmer"
+                label="Created by"
+                selected={query.farmerIds}
+                options={farmers.map((p) => ({ value: p.id, label: p.name }))}
+              />
+            )}
+          </>
+        }
+      />
+
+      <AccountsTable
+        rows={data}
+        total={total}
+        page={query.page}
+        pageCount={pageCount}
+        pageSize={query.pageSize}
+        sort={query.sort}
+        dir={query.dir}
+        displayTz={ctx.user.timezone}
+        canMutate={ctx.isManager}
+        creators={creators.map((c) => ({ id: c.id, name: c.stageName }))}
+        posters={posters.map((p) => ({ id: p.id, name: p.name }))}
+      />
+
+      {detail && (
+        <AccountDrawer detail={detail} displayTz={ctx.user.timezone} canMutate={ctx.isManager} />
+      )}
+    </>
+  )
+}

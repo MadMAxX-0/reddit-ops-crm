@@ -1,0 +1,294 @@
+@import 'tailwindcss';
+
+/* ===========================================================================
+   Reddit Ops CRM — design tokens
+   Dark, dense, orange-accented. A cockpit, not a landing page.
+
+   Rule that governs every colour decision below:
+     orange = the thing being measured
+     green / red = direction of change only
+   Never place them as competing accents in the same visual role.
+   =========================================================================== */
+
+@theme {
+  /* Dark. White text on black, hairline borders, colour only where it means
+     something. The page is true black and cards sit a shade above it, so a card
+     reads as a raised surface rather than as a hole — the same relationship the
+     light theme had, inverted.
+
+     The status colours are lifted from their light-theme values: #0f9d58 and
+     #d92d20 are legible on white but muddy on black, so each is replaced with a
+     brighter sibling rather than reused. */
+  --color-root: #000000;
+  --color-surface: #0d0d0f;
+  --color-surface-2: #191a1d;
+  --color-hairline: #2a2c31;
+
+  --color-fg: #ffffff;
+  --color-fg-secondary: #d6dae2;
+  --color-fg-muted: #9ba3b1;
+
+  --color-accent: #ff7a3d;
+  --color-accent-soft: rgba(255, 122, 61, 0.14);
+  --color-accent-dim: rgba(255, 122, 61, 0.35);
+
+  --color-info: #4d8dff;
+  --color-info-soft: rgba(77, 141, 255, 0.16);
+  --color-positive: #2ecc71;
+  --color-negative: #ff5c52;
+  --color-warning: #f5a623;
+
+  /* Geist. Chosen over both Inter and the system face for one reason: those
+     two are near-identical by design — Inter is drawn as a Helvetica/SF-alike,
+     so swapping between them changes the stylesheet and nothing on screen.
+     Geist is a geometric grotesque with flat terminals and tighter fitting; it
+     is legibly a different face at a glance, which is the point.
+
+     To change it, change this line. /admin/typeface previews the candidates
+     live and writes the pick to localStorage before it is hardcoded here. */
+  --font-sans: var(--font-geist), system-ui, -apple-system, sans-serif;
+  --font-mono: var(--font-jetbrains-mono), ui-monospace, 'SF Mono', monospace;
+
+  /* The density ladder. Every rung moved up one step on 2026-08-25: the old
+     scale bottomed out at 11px for the two sizes carrying most of the product
+     (141 and 185 uses), which is a footnote size, not an interface size. Dense
+     is the goal; squinting is not. Names are the pixel value, so a rename and a
+     resize are the same edit and the two can never drift apart. */
+  --text-13: 13px;
+  --text-13--line-height: 18px;
+  --text-14: 14px;
+  --text-14--line-height: 19px;
+  --text-15: 15px;
+  --text-15--line-height: 21px;
+  --text-16: 16px;
+  --text-16--line-height: 22px;
+  --text-18: 18px;
+  --text-18--line-height: 24px;
+  --text-24: 24px;
+  --text-24--line-height: 30px;
+  --text-36: 36px;
+  --text-36--line-height: 40px;
+  /* The hero rung: the one number a card exists to show. It sits well clear of
+     the ladder on purpose — at 36px in a 500px-wide card the figure reads as
+     just another line of text, and a KPI tile whose KPI does not dominate it is
+     a paragraph with a border. */
+  --text-48: 48px;
+  --text-48--line-height: 50px;
+
+  --radius-card: 10px;
+}
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body {
+  background: var(--color-root);
+  color: var(--color-fg);
+}
+
+body {
+  font-family: var(--font-sans);
+  font-size: 15px;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Every numeral in this app is tabular so columns line up when scanned fast.
+   The FAMILY is the UI sans, not the monospace: a typewriter face on every
+   figure, username and label made the whole product read as a terminal rather
+   than a tool. Tabular numerals do the column-alignment work on their own —
+   monospacing the letters too was never what kept the columns straight.
+   `--font-mono` is still defined, so this is one line to put back. */
+.mono,
+.tnum {
+  font-family: var(--font-sans);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
+}
+
+/* ---- shared primitives ---------------------------------------------------- */
+
+/* The one number a card exists to show.
+   Written by hand rather than composed from `text-NN` utilities on purpose.
+   Utilities only exist if Tailwind's scanner saw the class, and the dev
+   stylesheet is served under a filename that does not change between builds —
+   so a browser holding an older copy turns `text-48` into a class that means
+   nothing and the figure silently falls back to body size, which is how it ends
+   up the same height as its own label. A rule in this file is always emitted. */
+.kpi {
+  font-family: var(--font-sans);
+  font-size: 52px;
+  line-height: 54px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--color-fg);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
+}
+
+@utility card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-card);
+}
+
+/* Micro-labels: uppercase, tracked, semibold. They used to sit at 10px, where
+   caps stop being words and become texture — which reads as deliberate right up
+   until someone has to find a column by name. At 12px/600 they are legible
+   first and quiet second, and the tracking is pulled in to compensate: wide
+   letterspacing at 10px separates crowded caps, at 12px it just loosens them. */
+@utility label-xs {
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 16px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-fg-secondary);
+}
+
+@utility sublabel {
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--color-fg-muted);
+  font-family: var(--font-sans);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- scrollbars: thin, dark, never a light rectangle on a dark page ------- */
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #c9ced6 transparent;
+}
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: #c9ced6;
+  border-radius: 6px;
+  border: 2px solid var(--color-root);
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: #aeb5bf;
+}
+
+::selection {
+  background: var(--color-accent-dim);
+  color: var(--color-fg);
+}
+
+/* Focus ring: orange, visible, never removed. */
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+}
+
+input,
+select,
+textarea {
+  font-family: inherit;
+}
+
+input[type='date']::-webkit-calendar-picker-indicator {
+  cursor: pointer;
+  opacity: 0.55;
+}
+
+/* ---- print: reports are the only thing anyone prints ---------------------
+   Save-as-PDF from the browser is the PDF export. Rather than pull in a
+   rendering library to reproduce a page the browser already knows how to
+   paint, the page just prints properly: light ground, no chrome, no
+   page-breaks through a finding card. */
+
+@media print {
+  :root {
+    color-scheme: light;
+  }
+
+  html,
+  body {
+    background: #fff !important;
+    color: #111 !important;
+  }
+
+  /* the app chrome carries no information on paper */
+  nav,
+  header,
+  .print\:hidden {
+    display: none !important;
+  }
+
+  main {
+    max-width: none !important;
+    padding: 0 !important;
+  }
+
+  /* surfaces become paper; hairlines stay so tables keep their structure */
+  [class*='bg-surface'],
+  [class*='bg-root'] {
+    background: #fff !important;
+  }
+
+  [class*='text-fg'] {
+    color: #111 !important;
+  }
+
+  .sublabel,
+  .label-xs {
+    color: #555 !important;
+  }
+
+  [class*='border-hairline'],
+  [class*='rounded-'] {
+    border-color: #d4d4d8 !important;
+  }
+
+  /* never split a finding or a recommendation across a page */
+  section,
+  li,
+  [class*='rounded-\[8px\]'] {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  a[href]::after {
+    content: '';
+  }
+}
+
+/* ---- structural rules --------------------------------------------------
+   Thin vertical rules mark the edges of the content column, the way a printed
+   page has a margin. They carry no information; they stop a full-width black
+   screen from feeling like it has no edges. */
+
+/* Corner ticks: four short hairlines at the corners of an element, in place of
+   a full border. Used on the few controls that should read as primary. */
+.corner-ticks {
+  position: relative;
+}
+.corner-ticks::before,
+.corner-ticks::after {
+  content: '';
+  position: absolute;
+  width: 6px;
+  height: 6px;
+  border-color: var(--color-fg-muted);
+  border-style: solid;
+  pointer-events: none;
+}
+.corner-ticks::before {
+  top: -3px;
+  left: -3px;
+  border-width: 1px 0 0 1px;
+}
+.corner-ticks::after {
+  right: -3px;
+  bottom: -3px;
+  border-width: 0 1px 1px 0;
+}

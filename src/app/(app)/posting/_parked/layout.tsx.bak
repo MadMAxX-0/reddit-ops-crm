@@ -1,0 +1,35 @@
+import { requireCtx } from '@/lib/session'
+import { prisma } from '@/lib/prisma'
+import { dayContextLine, todayKey } from '@/lib/time'
+import { PageHeader, TabRow } from '@/components/shell/page-header'
+import { TabLink } from '@/components/shell/tab-link'
+
+export default async function PostingLayout({ children }: LayoutProps<'/posting'>) {
+  const ctx = await requireCtx()
+  const needsReview = ctx.isManager
+    ? await prisma.post.count({ where: { attributionStatus: 'NEEDS_REVIEW' } })
+    : 0
+
+  return (
+    <>
+      <PageHeader
+        title="Posting"
+        context={`${dayContextLine(todayKey(ctx.workspace.dayBoundaryTimezone), ctx.workspace.dayBoundaryTimezone, ctx.user.timezone)} · guidance before, observation after — nothing here is data entry`}
+        tabs={
+          <TabRow>
+            <TabLink href="/posting">Today&rsquo;s plan</TabLink>
+            <TabLink href="/grid">Grid</TabLink>
+            <TabLink href="/posting/cooldowns">Cooldown matrix</TabLink>
+            <TabLink href="/posting/discovered">Discovered posts</TabLink>
+            {ctx.isManager && (
+              <TabLink href="/posting/attribution">
+                Needs attribution{needsReview > 0 ? ` (${needsReview})` : ''}
+              </TabLink>
+            )}
+          </TabRow>
+        }
+      />
+      {children}
+    </>
+  )
+}

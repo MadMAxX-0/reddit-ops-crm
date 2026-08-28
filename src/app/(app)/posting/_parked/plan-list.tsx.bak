@@ -1,0 +1,188 @@
+'use client'
+
+import * as React from 'react'
+import Link from 'next/link'
+import { Check, ChevronDown, Copy, Lock } from 'lucide-react'
+import { Card } from '@/components/ui/card'
+import { StatusDot } from '@/components/ui/status-dot'
+import { TierBadge } from '@/components/ui/badge'
+import { fmtNum } from '@/lib/format'
+import { fmtRelative } from '@/lib/time'
+import { ACCOUNT_STATUS_TONE } from '@/lib/display/account'
+import type { PlanAccount, BlockReason } from '@/lib/queries/posting'
+import { cn } from '@/lib/utils'
+
+const REASON_LABEL: Record<BlockReason, string> = {
+  VERIFICATION: 'not verified',
+  KARMA: 'karma too low',
+  AGE: 'account too young',
+  COOLDOWN: 'cooling down',
+  SUBREDDIT_STATUS: 'subreddit closed to us',
+  ACCOUNT_STATUS: 'account cannot post',
+}
+
+export function PlanList({ accounts, displayTz }: { accounts: PlanAccount[]; displayTz: string }) {
+  return (
+    <div className="space-y-3">
+      <Card className="px-4 py-3">
+        <p className="text-14 text-fg-secondary leading-relaxed">
+          This is advisory. Read it, then go post on Reddit as normal — the scraper will find the
+          post and count it. There is nothing to submit here, and your daily count comes entirely
+          from what was discovered.
+        </p>
+      </Card>
+
+      {accounts.map((a) => (
+        <AccountPlan key={a.id} account={a} displayTz={displayTz} />
+      ))}
+    </div>
+  )
+}
+
+const SHORTLIST = 8
+
+function AccountPlan({ account, displayTz }: { account: PlanAccount; displayTz: string }) {
+  const [showBlocked, setShowBlocked] = React.useState(false)
+  const [showAllEligible, setShowAllEligible] = React.useState(false)
+  const [copied, setCopied] = React.useState(false)
+
+  const cooling = account.blocked.filter((b) => b.reason === 'COOLDOWN')
+  const structural = account.blocked.filter((b) => b.reason !== 'COOLDOWN')
+
+  return (
+    <Card>
+      <div className="border-hairline flex flex-wrap items-center gap-3 border-b px-4 py-2.5">
+        <StatusDot tone={ACCOUNT_STATUS_TONE[account.status] ?? 'muted'} />
+        <Link
+          href={`/accounts?account=${account.id}`}
+          className="mono text-15 text-fg hover:text-accent"
+        >
+          u/{account.username}
+        </Link>
+        <span className="sublabel">
+          {account.creatorName ?? 'unassigned'} · health {account.healthScore} · {account.ageDays}d
+          · {fmtNum(account.karmaPost)} karma
+        </span>
+
+        {account.funnelUrl && (
+          <button
+            type="button"
+            onClick={() => {
+              navigator.clipboard.writeText(account.funnelUrl!)
+              setCopied(true)
+              setTimeout(() => setCopied(false), 1300)
+            }}
+            className="bg-surface-2 border-hairline text-13 text-fg-secondary hover:text-fg ml-auto inline-flex h-6 items-center gap-1.5 rounded-[5px] border px-2"
+            title={account.funnelUrl}
+          >
+            {copied ? <Check className="text-positive h-3 w-3" /> : <Copy className="h-3 w-3" />}
+            {copied ? 'Copied' : `Copy bio link · ${account.slug}`}
+          </button>
+        )}
+
+        <span
+          className={cn(
+            'mono text-14 shrink-0',
+            account.postsToday > 0 ? 'text-accent' : 'text-fg-muted',
+          )}
+        >
+          {account.postsToday} today
+        </span>
+      </div>
+
+      <div className="px-4 py-3">
+        {account.eligible.length === 0 ? (
+          <p className="text-fg-muted text-14">
+            Nothing open right now.{' '}
+            {cooling.length > 0 &&
+              `Next opening ${fmtRelative(
+                cooling.reduce(
+                  (min, c) => (c.nextEligibleAt && c.nextEligibleAt < min ? c.nextEligibleAt : min),
+                  cooling[0].nextEligibleAt ?? new Date(),
+                ),
+              )} from now.`}
+          </p>
+        ) : (
+          <>
+            <p className="label-xs mb-2">
+              Best openings now — ranked by what these subreddits actually returned in 30 days
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              {(showAllEligible ? account.eligible : account.eligible.slice(0, SHORTLIST)).map(
+                (e) => (
+                  <span
+                    key={e.subredditId}
+                    className={cn(
+                      'border-hairline bg-surface-2 text-14 inline-flex items-center gap-1.5 rounded-[5px] border px-2 py-1',
+                      e.detail ? 'text-warning border-warning/30' : 'text-fg',
+                    )}
+                    title={
+                      [
+                        e.detail,
+                        e.medianUpvotes != null ? `median ${e.medianUpvotes} upvotes` : null,
+                        e.removalRate != null
+                          ? `${Math.round(e.removalRate * 100)}% removed`
+                          : null,
+                      ]
+                        .filter(Boolean)
+                        .join(' · ') || undefined
+                    }
+                  >
+                    <TierBadge tier={e.tier} />
+                    r/{e.subredditName}
+                    {e.medianUpvotes != null && (
+                      <span className="mono text-fg-muted text-[12px]">{e.medianUpvotes}</span>
+                    )}
+                  </span>
+                ),
+              )}
+              {account.eligible.length > SHORTLIST && (
+                <button
+                  type="button"
+                  onClick={() => setShowAllEligible((v) => !v)}
+                  className="text-fg-secondary hover:text-fg text-13 px-1.5"
+                >
+                  {showAllEligible
+                    ? 'show fewer'
+                    : `+${account.eligible.length - SHORTLIST} more eligible`}
+                </button>
+              )}
+            </div>
+          </>
+        )}
+
+        {account.blocked.length > 0 && (
+          <>
+            <button
+              type="button"
+              onClick={() => setShowBlocked((v) => !v)}
+              className="text-fg-secondary hover:text-fg text-13 mt-3 inline-flex items-center gap-1"
+            >
+              <ChevronDown
+                className={cn('h-3 w-3 transition-transform', showBlocked && 'rotate-180')}
+              />
+              {account.blocked.length} blocked · {cooling.length} on cooldown, {structural.length}{' '}
+              by rules
+            </button>
+
+            {showBlocked && (
+              <ul className="mt-2 grid gap-x-6 gap-y-1 sm:grid-cols-2 lg:grid-cols-3">
+                {account.blocked.map((b) => (
+                  <li key={b.subredditId} className="flex items-baseline gap-2">
+                    <Lock className="text-fg-muted mt-0.5 h-2.5 w-2.5 shrink-0" />
+                    <span className="text-14 text-fg-secondary truncate">r/{b.subredditName}</span>
+                    <span className="sublabel ml-auto shrink-0">
+                      {b.reason === 'COOLDOWN' && b.nextEligibleAt
+                        ? `free in ${fmtRelative(b.nextEligibleAt)}`
+                        : (b.detail ?? REASON_LABEL[b.reason!])}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </>
+        )}
+      </div>
+    </Card>
+  )
+}
